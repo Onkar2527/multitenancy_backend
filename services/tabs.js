@@ -1,44 +1,11 @@
 const db = require('../utilities/dbModule')
-const rsa = require('../RSA/rsa')
 
 
-// exports.getTabs = async (req, res) => {
-//     const { APPLICANT_ID } = req.body;
-//     const supportKey = req.headers['supportkey'];
-//     const q = `select * from view_tab_master where APPLICANT_ID = ? ORDER BY view_tab_master.INDEX`;
-
-//     try {
-//         const ResTabs = await db.executeQueryData(q, [APPLICANT_ID], supportKey);
-//         res.send({
-//             "code": 200,
-//             "message": "ok",
-//             "data": ResTabs
-//         });
-//     } catch (error) {
-//         console.log("error", error);
-//         res.status(400).send({
-//             "code": 400,
-//             "message": "Failed to get tabs"
-//         });
-//     }
-// };
-
-
-
-exports.getTabs = async(req, res) => {
+// -------------------------------
+// GET TABS FOR APPLICANT (BANK DB)
+exports.getTabs = async (req, res) => {
     try {
         const { APPLICANT_ID } = req.body;
-
-        // 🔐 JWT middleware मधून
-        const user = req.user;
-        const dbConn = req.db;
-
-        if (!user) {
-            return res.status(401).send({
-                code: 401,
-                message: 'User context missing'
-            });
-        }
 
         if (!APPLICANT_ID) {
             return res.status(400).send({
@@ -54,7 +21,7 @@ exports.getTabs = async(req, res) => {
             ORDER BY view_tab_master.INDEX
         `;
 
-        const [rows] = await dbConn.promise().query(q, [APPLICANT_ID]);
+        const [rows] = await req.db.promise().query(q, [APPLICANT_ID]);
 
         return res.send({
             code: 200,
@@ -63,9 +30,9 @@ exports.getTabs = async(req, res) => {
         });
 
     } catch (error) {
-        console.log('getTabs error:', error);
-        return res.status(400).send({
-            code: 400,
+        console.error('❌ GET TABS ERROR:', error);
+        return res.status(500).send({
+            code: 500,
             message: 'Failed to get tabs'
         });
     }

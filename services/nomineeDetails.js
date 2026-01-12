@@ -1,109 +1,4 @@
-// const db = require('../utilities/dbModule');
-
-
-
-// function reqData(req)
-// {
-//     data = {
-//             APPLICANT_ID : req.body.APPLICANT_ID,
-//             IS_MINOR:req.body.IS_MINOR,
-//             DOB:req.body.DOB,
-//             NOMINEE_NAME:req.body.NOMINEE_NAME,
-//             RELATION :req.body.RELATION,
-//             NOMINEE_ADDRESS :req.body.NOMINEE_ADDRESS,
-//             APONITED_NAME:req.body.APONITED_NAME,
-//             APONITED_ADDRESS:req.body.APONITED_ADDRESS,
-//             NOMINEE_MIDDLE_NAME : req.body.NOMINEE_MIDDLE_NAME,
-//             NOMINEE_LAST_NAME : req.body.NOMINEE_LAST_NAME,
-//             NOMINEE_DOB : req.body.NOMINEE_DOB,
-//             NOMINEE_AGE : req.body.NOMINEE_AGE
-
-//     }
-
-//     return data;
-// }
-
-// exports.get = async (req, res) => {
-//     const supportKey = req.headers['supportkey'];
-//     const q = `select * from nominee_details where APPLICANT_ID = ?`;
-//     try {
-//         const results = await db.executeQueryData(q, [req.body.APPLICANT_ID], supportKey);
-//         res.send({
-//             "code": 200,
-//             "message": "OK",
-//             "data": results
-//         });
-//     } catch (error) {
-//         console.log("error", error);
-//         res.status(400).send({
-//             "code": 400,
-//             "message": "Failed to get Nominee Details"
-//         });
-//     }
-// };
-
-// exports.create = async (req, res) => {
-//     const supportKey = req.headers['supportkey'];
-//     const data = reqData(req);
-//     const q = `insert into nominee_details set ?`;
-
-//     try {
-//         await db.executeQueryData(q, data, supportKey);
-//         res.send({
-//             "code": 200,
-//             "message": "Nominee Details information saved successfully"
-//         });
-//     } catch (error) {
-//         console.log("error", error);
-//         res.status(400).send({
-//             "code": 400,
-//             "message": "Failed to save Nominee Details information"
-//         });
-//     }
-// };
-
-// exports.update = async (req, res) => {
-//     const supportKey = req.headers['supportkey'];
-//     const data = reqData(req);
-//     let setData = '';
-//     let recData = [];
-
-//     Object.keys(data).forEach(key => {
-//         setData += `${key} = ? ,`;
-//         recData.push(data[key]);
-//     });
-
-//     setData = setData.slice(0, -1);
-
-//     const q = `update nominee_details set ${setData} where ID = ?`;
-//     recData.push(req.body.ID);
-
-//     try {
-//         await db.executeQueryData(q, recData, supportKey);
-//         res.send({
-//             "code": 200,
-//             "message": "Nominee details information updated successfully"
-//         });
-//     } catch (error) {
-//         console.log(error);
-//         res.status(400).send({
-//             "code": 400,
-//             "message": "Failed to update nominee_details."
-//         });
-//     }
-// };
-
-
-
-
-
-
-// ❌ OLD
-// const db = require('../utilities/dbModule');
-
-// -------------------------------
-// Request body mapper
-function reqData(req) {
+const reqData = (req) => {
     return {
         APPLICANT_ID: req.body.APPLICANT_ID,
         IS_MINOR: req.body.IS_MINOR,
@@ -118,11 +13,11 @@ function reqData(req) {
         APONITED_NAME: req.body.APONITED_NAME,
         APONITED_ADDRESS: req.body.APONITED_ADDRESS
     };
-}
+};
 
 // -------------------------------
 // GET Nominee
-exports.get = async(req, res) => {
+exports.get = async (req, res) => {
     try {
         const { APPLICANT_ID } = req.body;
 
@@ -133,22 +28,20 @@ exports.get = async(req, res) => {
             });
         }
 
-        // 🏦 BANK DB (from middleware)
-        const [rows] = await req.db
-            .promise()
-            .query(
-                `SELECT * FROM nominee_details WHERE APPLICANT_ID = ?`, [APPLICANT_ID]
-            );
+        const [rows] = await req.db.promise().query(
+            `SELECT * FROM nominee_details WHERE APPLICANT_ID = ?`,
+            [APPLICANT_ID]
+        );
 
-        res.send({
+        return res.send({
             code: 200,
             message: 'OK',
             data: rows
         });
 
     } catch (error) {
-        console.error('NOMINEE GET ERROR:', error);
-        res.status(500).send({
+        console.error('❌ NOMINEE GET ERROR:', error);
+        return res.status(500).send({
             code: 500,
             message: 'Failed to get Nominee Details'
         });
@@ -157,7 +50,7 @@ exports.get = async(req, res) => {
 
 // -------------------------------
 // CREATE Nominee
-exports.create = async(req, res) => {
+exports.create = async (req, res) => {
     try {
         const data = reqData(req);
 
@@ -168,21 +61,16 @@ exports.create = async(req, res) => {
             });
         }
 
-        await req.db
-            .promise()
-            .query(
-                `INSERT INTO nominee_details SET ?`,
-                data
-            );
+        await req.db.promise().query(`INSERT INTO nominee_details SET ?`, data);
 
-        res.send({
+        return res.send({
             code: 200,
             message: 'Nominee Details saved successfully'
         });
 
     } catch (error) {
-        console.error('NOMINEE CREATE ERROR:', error);
-        res.status(500).send({
+        console.error('❌ NOMINEE CREATE ERROR:', error);
+        return res.status(500).send({
             code: 500,
             message: 'Failed to save Nominee Details'
         });
@@ -191,7 +79,7 @@ exports.create = async(req, res) => {
 
 // -------------------------------
 // UPDATE Nominee
-exports.update = async(req, res) => {
+exports.update = async (req, res) => {
     try {
         const data = reqData(req);
         const { ID } = req.body;
@@ -207,28 +95,32 @@ exports.update = async(req, res) => {
         const values = [];
 
         Object.keys(data).forEach(key => {
-            setData += `${key} = ?, `;
-            values.push(data[key]);
+            if (data[key] !== undefined) {
+                setData += `${key} = ?, `;
+                values.push(data[key]);
+            }
         });
+
+        if (values.length === 0) {
+            return res.status(400).send({
+                code: 400,
+                message: 'No data to update'
+            });
+        }
 
         setData = setData.slice(0, -2);
         values.push(ID);
 
-        await req.db
-            .promise()
-            .query(
-                `UPDATE nominee_details SET ${setData} WHERE ID = ?`,
-                values
-            );
+        await req.db.promise().query(`UPDATE nominee_details SET ${setData} WHERE ID = ?`, values);
 
-        res.send({
+        return res.send({
             code: 200,
             message: 'Nominee Details updated successfully'
         });
 
     } catch (error) {
-        console.error('NOMINEE UPDATE ERROR:', error);
-        res.status(500).send({
+        console.error('❌ NOMINEE UPDATE ERROR:', error);
+        return res.status(500).send({
             code: 500,
             message: 'Failed to update Nominee Details'
         });

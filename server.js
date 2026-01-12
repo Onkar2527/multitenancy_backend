@@ -27,7 +27,7 @@ app.use(bodyParser.json({ limit: '50mb', extended: true }));
 
 
 
-app.use('/static', express.static(path.join(__dirname, 'uploads')));
+app.use('/bank_logos', express.static(path.join(__dirname, 'uploads', 'bank_logos')));
 
 app.use('/', (req, res, next) => {
     let supportKey = req.headers['supportkey'];
@@ -55,14 +55,14 @@ if (process.env.IS_HTTPS == 1) {
     };
     const httpsServer = https.createServer(options, app)
 
-    httpsServer.listen(port, hostname, async() => {
+    httpsServer.listen(port, hostname, async () => {
         console.log(`Server listening on (https) https://${hostname}:${port}`);
         // let token = await tokentest();
         // console.log("token", token);
     })
 
 } else {
-    httpServer.listen(port, hostname, async() => {
+    httpServer.listen(port, hostname, async () => {
         console.log(`Server listening on (http) http://${hostname}:${port}`);
         // let token = await tokentest();
         // console.log("token", token);
@@ -79,7 +79,7 @@ if (process.env.IS_HTTPS == 1) {
 //     }
 // })();
 
-(async() => {
+(async () => {
     try {
         await initBankPools();
         console.log('🚀 All Bank DBs initialized');

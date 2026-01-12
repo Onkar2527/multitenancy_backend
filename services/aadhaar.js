@@ -2,133 +2,126 @@
 const db = require('../utilities/dbModule');
 
 function reqData(req) {
-    const data = {
+    return {
         AADHAAR_NUMBER: req.body.AADHAAR_NUMBER,
         APPLICANT_ID: req.body.APPLICANT_ID,
         APPLICANT_NO: req.body.APPLICANT_NO,
-        ADDRESS_ID: req.body.ADDRESS_ID,
-
         DOB: req.body.DOB,
         APPLICANT_FULL_NAME: req.body.APPLICANT_FULL_NAME,
         GENDER: req.body.GENDER,
         PROFILE_IMAGE: req.body.PROFILE_IMAGE,
         IS_VERIFIED: req.body.IS_VERIFIED ? 1 : 0
-    }
-    return data
+    };
 }
-
 
 exports.create = async (req, res) => {
-    let data = reqData(req)
-    let supportKey = req.headers['supportKey']
-    var setData = "";
-    var recordData = [];
-
-    Object.keys(data).forEach(key => {
-        setData += `${key} ,`;
-        recordData.push(data[key]);
-    });
-
-
-    console.log("data from req", data);
-
-
+    const pool = req.db;
+    let connection;
     try {
-        const results = await db.executeQueryData(`insert into aadhaar_address set ?`, data.ADDRESS_ID, supportKey);
-        data.ADDRESS_ID = results.insertId;
-        console.log("insertid", results);
-        console.log("data at the end", data);
+        const addressData = req.body.ADDRESS_ID || {}; // Assuming ADDRESS_ID object contains fields
+        const aadhaarData = reqData(req);
 
-        await db.executeQueryData(`insert into aadhaar_verified_list set ?`, data, supportKey);
+        connection = await pool.promise().getConnection();
+        await connection.beginTransaction();
 
+        // 1. Insert/Update Address
+        const [addressResult] = await connection.query(`INSERT INTO aadhaar_address SET ?`, [addressData]);
+        aadhaarData.ADDRESS_ID = addressResult.insertId;
+
+        // 2. Insert Aadhaar Verified Record
+        await connection.query(`INSERT INTO aadhaar_verified_list SET ?`, [aadhaarData]);
+
+        await connection.commit();
         res.send({
-            "code": 200,
-            "message": "Aadhaar information saved successfully"
-        })
+            code: 200,
+            message: "Aadhaar information saved successfully"
+        });
+    } catch (error) {
+        console.error("AADHAAR CREATE ERROR:", error);
+        if (connection) await connection.rollback();
+        res.status(400).send({
+            code: 400,
+            message: "Failed to save Aadhaar details"
+        });
+    } finally {
+        if (connection) connection.release();
     }
-
-    catch (error) {
-        console.log("error", error);
-        res.send({
-            "code": 400,
-            "message": "failed"
-        })
-    }
-
-}
+};
 
 exports.get = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    let q = ``;
-    if (req.body.AADHAAR_NUMBER) {
-        q = `select * from aadhaar_verified_list where APPLICANT_NO = ${req.body.APPLICANT_NO} AND AADHAAR_NUMBER = ${req.body.AADHAAR_NUMBER} `;
-    } else {
-        q = `select * from aadhaar_verified_list where 0`;
-    }
-
+    const pool = req.db;
     try {
-        const results = await db.executeQuery(q, supportKey);
+        const { AADHAAR_NUMBER, APPLICANT_NO } = req.body;
+        if (!AADHAAR_NUMBER) {
+            return res.send({ code: 200, message: "OK", data: [] });
+        }
+
+        const q = `SELECT * FROM aadhaar_verified_list WHERE APPLICANT_NO = ? AND AADHAAR_NUMBER = ?`;
+        const [results] = await pool.promise().query(q, [APPLICANT_NO, AADHAAR_NUMBER]);
+
         if (results.length > 0) {
-            const resultAdress = await db.executeQuery(`select * from aadhaar_address where ID = ${results[0].ADDRESS_ID}`, supportKey);
-            results[0].ADDRESS_ID = resultAdress;
+            const [addressResults] = await pool.promise().query(`SELECT * FROM aadhaar_address WHERE ID = ?`, [results[0].ADDRESS_ID]);
+            results[0].ADDRESS_DETAILS = addressResults.length > 0 ? addressResults[0] : null;
+
             res.send({
-                "code": 200,
-                "message": "OK",
-                "data": results
+                code: 200,
+                message: "OK",
+                data: results
             });
         } else {
-            res.status(400).send({
-                "code": 400,
-                "message": "Something went wrong"
+            res.send({
+                code: 200,
+                message: "No record found",
+                data: []
             });
         }
     } catch (error) {
-        console.log("err", error);
+        console.error("AADHAAR GET ERROR:", error);
         res.status(400).send({
-            "code": 400,
-            "message": "Failed to get Aadhaar details"
+            code: 400,
+            message: "Failed to get Aadhaar details"
         });
     }
 };
 
 exports.update = async (req, res) => {
-    let data = reqData(req)
-    let ID = req.body.ID;
-    let supportKey = req.headers['supportKey']
-    var setData = "";
-    var recordData = [];
-
-
-    Object.keys(data).forEach(key => {
-        setData += `${key} ,`;
-        recordData.push(data[key]);
-    });
-
-    let address_result;
-
+    const pool = req.db;
+    let connection;
     try {
-        if (!data.ADDRESS_ID[0].ID) {
-            address_result = await db.executeQueryData(`insert into aadhaar_address set ?`, data.ADDRESS_ID, supportKey);
-            data.ADDRESS_ID = address_result.insertId;
+        const { ID, ADDRESS_ID } = req.body;
+        const aadhaarData = reqData(req);
+
+        connection = await pool.promise().getConnection();
+        await connection.beginTransaction();
+
+        let finalAddressId;
+
+        // Handle Address update or insert
+        if (ADDRESS_ID && (Array.isArray(ADDRESS_ID) ? ADDRESS_ID[0]?.ID : ADDRESS_ID.ID)) {
+            const addrObj = Array.isArray(ADDRESS_ID) ? ADDRESS_ID[0] : ADDRESS_ID;
+            finalAddressId = addrObj.ID;
+            await connection.query(`UPDATE aadhaar_address SET ? WHERE ID = ?`, [addrObj, finalAddressId]);
+        } else if (ADDRESS_ID) {
+            const [addrInsert] = await connection.query(`INSERT INTO aadhaar_address SET ?`, [ADDRESS_ID]);
+            finalAddressId = addrInsert.insertId;
         }
-        else {
-            await db.executeQueryData(`update aadhaar_address set ? where ID = ?`, [data.ADDRESS_ID[0], data.ADDRESS_ID[0].ID], supportKey);
-            data.ADDRESS_ID = data.ADDRESS_ID[0].ID;
+
+        if (finalAddressId) {
+            aadhaarData.ADDRESS_ID = finalAddressId;
         }
 
-        await db.executeQueryData(`update aadhaar_verified_list set ? where ID = ?`, [data, ID], supportKey);
+        await connection.query(`UPDATE aadhaar_verified_list SET ? WHERE ID = ?`, [aadhaarData, ID]);
 
-
-        res.send({
-            "code": 200
-        })
+        await connection.commit();
+        res.send({ code: 200, message: "Aadhaar information updated successfully" });
+    } catch (error) {
+        console.error("AADHAAR UPDATE ERROR:", error);
+        if (connection) await connection.rollback();
+        res.status(400).send({
+            code: 400,
+            message: "Failed to update Aadhaar info"
+        });
+    } finally {
+        if (connection) connection.release();
     }
-    catch (error) {
-        console.log(error);
-        res.send({
-            "code": 400,
-            "message": "Failed to update aadhaar info"
-        })
-    }
-
-}
+};

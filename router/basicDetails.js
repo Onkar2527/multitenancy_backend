@@ -3,10 +3,10 @@ const router = express.Router();
 const asyncHandler = require('../utilities/asyncHandler');
 const basicDetailsService = require('../services/basicDetails');
 
-router 
+router
     .post('/get', asyncHandler(basicDetailsService.get))
     .post('/create', asyncHandler(basicDetailsService.create))
-    .post('/update', asyncHandler(basicDetailsService.update1))
+    .post('/update', asyncHandler(basicDetailsService.update))
     .post('/getAll', asyncHandler(basicDetailsService.getAll))
 
 

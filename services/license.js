@@ -1,9 +1,7 @@
 const db = require('../utilities/dbModule');
 
-
-
 function reqData(req) {
-    data = {
+    return {
         CLIENT_ID: req.body.CLIENT_ID,
         LICENSE_NUMBER: req.body.LICENSE_NUMBER,
         STATE: req.body.STATE,
@@ -26,77 +24,84 @@ function reqData(req) {
         BLOOD_GROUP: req.body.BLOOD_GROUP,
         VEHICLE_CLASSES: req.body.VEHICLE_CLASSES,
         INITIAL_DOI: req.body.INITIAL_DOI
-    }
-
-    return data;
+    };
 }
 
 exports.get = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    const q = `select * from license_verified_list where LICENSE_NUMBER = ?`;
+    const pool = req.db;
     try {
-        const results = await db.executeQueryData(q, [req.body.LICENSE_NUMBER], supportKey);
+        const { LICENSE_NUMBER } = req.body;
+        if (!LICENSE_NUMBER) {
+            return res.send({ code: 200, message: "OK", data: [] });
+        }
+        const q = `SELECT * FROM license_verified_list WHERE LICENSE_NUMBER = ?`;
+        const [results] = await pool.promise().query(q, [LICENSE_NUMBER]);
         res.send({
-            "code": 200,
-            "message": "OK",
-            "data": results
+            code: 200,
+            message: "OK",
+            data: results
         });
     } catch (error) {
-        console.log(error);
+        console.error("LICENSE GET ERROR:", error);
         res.status(400).send({
-            "code": 400,
-            "message": "Failed to get license verification info"
+            code: 400,
+            message: "Failed to get license verification info"
         });
     }
 };
 
 exports.create = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    const data = reqData(req);
-    const q = `insert into license_verified_list set ?`;
-
+    const pool = req.db;
+    let connection;
     try {
-        await db.executeQueryData(q, data, supportKey);
+        const data = reqData(req);
+        connection = await pool.promise().getConnection();
+        await connection.beginTransaction();
+
+        await connection.query(`INSERT INTO license_verified_list SET ?`, [data]);
+
+        await connection.commit();
         res.send({
-            "code": 200,
-            "message": "License information saved successfully"
+            code: 200,
+            message: "License information saved successfully"
         });
     } catch (error) {
-        console.log("error", error);
+        console.error("LICENSE CREATE ERROR:", error);
+        if (connection) await connection.rollback();
         res.status(400).send({
-            "code": 400,
-            "message": "Failed to save license info"
+            code: 400,
+            message: "Failed to save license info"
         });
+    } finally {
+        if (connection) connection.release();
     }
 };
 
 exports.update = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    const data = reqData(req);
-    let setData = '';
-    let recData = [];
-
-    Object.keys(data).forEach(key => {
-        setData += `${key} = ? ,`;
-        recData.push(data[key]);
-    });
-
-    setData = setData.slice(0, -1);
-
-    const q = `update license_verified_list set ${setData} where ID = ?`;
-    recData.push(req.body.ID);
-
+    const pool = req.db;
+    let connection;
     try {
-        await db.executeQueryData(q, recData, supportKey);
+        const { ID } = req.body;
+        const data = reqData(req);
+
+        connection = await pool.promise().getConnection();
+        await connection.beginTransaction();
+
+        await connection.query(`UPDATE license_verified_list SET ? WHERE ID = ?`, [data, ID]);
+
+        await connection.commit();
         res.send({
-            "code": 200,
-            "message": "License information updated successfully"
+            code: 200,
+            message: "License information updated successfully"
         });
     } catch (error) {
-        console.log(error);
+        console.error("LICENSE UPDATE ERROR:", error);
+        if (connection) await connection.rollback();
         res.status(400).send({
-            "code": 400,
-            "message": "Failed to update license info"
+            code: 400,
+            message: "Failed to update license info"
         });
+    } finally {
+        if (connection) connection.release();
     }
 };

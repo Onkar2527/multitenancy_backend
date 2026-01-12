@@ -1,49 +1,50 @@
-const db = require("../../utilities/dbModule")
+const table = `doc_verify_rates`;
 
-const table = `doc_verify_rates`
-
+// ------------------------------
+// GET RATES (BANK DB)
 exports.getRates = async (req, res) => {
     try {
-        let getRateQ = `select * from ${table}`;
+        const [rows] = await req.db.promise().query(`SELECT * FROM ??`, [table]);
 
-        let getRateR = await db.executeQuery(getRateQ, "");
-
-        res.send({
-            "code": 200,
-            "data": getRateR
-        })
+        return res.send({
+            code: 200,
+            data: rows
+        });
+    } catch (error) {
+        console.error('❌ GET RATES ERROR:', error);
+        return res.status(500).send({
+            code: 500,
+            message: "Internal Error",
+            error: error.message
+        });
     }
-    catch (error) {
-        console.log(error);
-        res.send({
-            "code": 400,
-            "message": "Internal Error",
-            "error": error
-        })
-    }
+};
 
-}
-
+// ------------------------------
+// SET RATE (BANK DB)
 exports.setRate = async (req, res) => {
     try {
-        let ID = req.body.ID;
-        let RATE = req.body.RATE;
+        const { ID, RATE } = req.body;
 
-        let updateRateQ = `update ${table} set RATE = ${RATE} where ID = ${ID}`;
+        if (ID === undefined || RATE === undefined) {
+            return res.status(400).send({
+                code: 400,
+                message: "ID and RATE are required"
+            });
+        }
 
-        await db.executeQuery(updateRateQ, "");
+        await req.db.promise().query(`UPDATE ?? SET RATE = ? WHERE ID = ?`, [table, RATE, ID]);
 
-        res.send({
-            "code": 200,
-            "message": "updated"
-        })
+        return res.send({
+            code: 200,
+            message: "Rate updated successfully."
+        });
+    } catch (error) {
+        console.error('❌ SET RATE ERROR:', error);
+        return res.status(500).send({
+            code: 500,
+            message: "Internal Error",
+            error: error.message
+        });
     }
-    catch (error) {
-        console.log(error)
-        res.send({
-            "code": 400,
-            "message": "Internal Error",
-            "error": error
-        })
-    }
-}
+};

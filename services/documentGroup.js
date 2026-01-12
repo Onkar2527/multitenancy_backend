@@ -1,23 +1,19 @@
-const db = require('../utilities/dbModule');
-
-
-
-
-
+// -------------------------------
+// GET ALL DOCUMENT GROUPS (BANK DB)
 exports.get = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
     try {
-        const result = await db.executeQuery(`select * from document_group_master where 1`, supportKey);
-        res.send({
-            "code": 200,
-            "message": "ok",
-            "data": result
+        const [rows] = await req.db.promise().query(`SELECT * FROM document_group_master`);
+
+        return res.send({
+            code: 200,
+            message: 'ok',
+            data: rows
         });
     } catch (error) {
-        console.log("error", error);
-        res.status(400).send({
-            "code": 400,
-            "message": "failed to get documents document groups"
+        console.error('❌ GET DOCUMENT GROUPS ERROR:', error);
+        return res.status(500).send({
+            code: 500,
+            message: 'failed to get document groups'
         });
     }
 };

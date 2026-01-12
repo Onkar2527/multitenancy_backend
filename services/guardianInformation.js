@@ -1,12 +1,10 @@
 const db = require('../utilities/dbModule');
 
-
 function reqData(req) {
-
-    let data = {
+    return {
         APPLICANT_ID: req.body.APPLICANT_ID,
         APPLICANT_NO: req.body.APPLICANT_NO,
-          FIRST_NAME: req.body.FIRST_NAME,
+        FIRST_NAME: req.body.FIRST_NAME,
         MIDDLE_NAME: req.body.MIDDLE_NAME,
         LAST_NAME: req.body.LAST_NAME,
         F_OR_H_FIRST_NAME: req.body.F_OR_H_FIRST_NAME,
@@ -28,7 +26,7 @@ function reqData(req) {
         PERMANENT_PINCODE: req.body.PERMANENT_PINCODE,
         HOUSE_PHONE: req.body.HOUSE_PHONE,
         OFFICE_PHONE: req.body.OFFICE_PHONE,
-        EMAIL_ID: string = req.body.EMAIL_ID,
+        EMAIL_ID: req.body.EMAIL_ID,
         MOBILE_NUMBER: req.body.MOBILE_NUMBER,
         WORK: req.body.WORK,
         ESTABLISHMENT: req.body.ESTABLISHMENT,
@@ -38,7 +36,7 @@ function reqData(req) {
         FAMILY_COUNT: req.body.FAMILY_COUNT,
         EDUCATION: req.body.EDUCATION,
         IS_INSURED: req.body.IS_INSURED ? 1 : 0,
-        INSURANCE_YEAR: req.body.INSURANCE_COMPANY,
+        INSURANCE_YEAR: req.body.INSURANCE_YEAR,
         POLICY_TYPE: req.body.POLICY_TYPE,
         INSURANCE_COMPANY: req.body.INSURANCE_COMPANY,
         AADHAAR_NUMBER: req.body.AADHAAR_NUMBER,
@@ -51,29 +49,20 @@ function reqData(req) {
         PROPRIETOR_DETAILS: req.body.PROPRIETOR_DETAILS,
         MOTHERS_NAME: req.body.MOTHERS_NAME,
         PAN_NO: req.body.PAN_NO,
-
         NATIONALITY: req.body.NATIONALITY,
         DATE_OF_BIRTH: req.body.DATE_OF_BIRTH,
         GENDER: req.body.GENDER,
         IS_CURRENT_ADDRESS_ON_OVD: req.body.IS_CURRENT_ADDRESS_ON_OVD,
         ADDRESS_DOCUMENT: req.body.ADDRESS_DOCUMENT,
         ADDRESS_DOCUMENT_NUMBER: req.body.ADDRESS_DOCUMENT_NUMBER,
-        IS_DOB_MISMATCH: req.body.IS_DOB_MISMATCH ? '1' : '0',
+        IS_DOB_MISMATCH: req.body.IS_DOB_MISMATCH ? 1 : 0,
         IS_VERNACULAR: req.body.IS_VERNACULAR,
-
         MOTHERS_LAST_NAME: req.body.MOTHERS_LAST_NAME,
         MOTHERS_MIDDLE_NAME: req.body.MOTHERS_MIDDLE_NAME,
         MOBILE_NUMBER_2: req.body.MOBILE_NUMBER_2,
         OTHER_CASTE: req.body.OTHER_CASTE,
         OTHER_RELIGION: req.body.OTHER_RELIGION,
         IS_EMAIL_VERIFIED: req.body.IS_EMAIL_VERIFIED,
-
-        IS_CURRENT_ADDRESS_ON_OVD: req.body.IS_CURRENT_ADDRESS_ON_OVD,
-        ADDRESS_DOCUMENT: req.body.ADDRESS_DOCUMENT,
-        ADDRESS_DOCUMENT_NUMBER: req.body.ADDRESS_DOCUMENT_NUMBER,
-        IS_DOB_MISMATCH: req.body.IS_DOB_MISMATCH,
-        IS_VERNACULAR: req.body.IS_VERNACULAR,
-
         RISK_CATEGORY: req.body.RISK_CATEGORY,
         IS_MINOR: req.body.IS_MINOR,
         GUARDIAN_NAME: req.body.GUARDIAN_NAME,
@@ -82,17 +71,13 @@ function reqData(req) {
         GUARDIAN_OTHER_DOCUMENT: req.body.GUARDIAN_OTHER_DOCUMENT,
         GUARDIAN_OTHER_DOCUMENT_NUMBER: req.body.GUARDIAN_OTHER_DOCUMENT_NUMBER,
         MINOR_DATE_OF_BIRTH_PROOF: req.body.MINOR_DATE_OF_BIRTH_PROOF,
-
-
         PROFESSION: req.body.PROFESSION,
         NATURE_OF_SERVICE: req.body.NATURE_OF_SERVICE,
         SELF_EMPLOYED: req.body.SELF_EMPLOYED,
         NATURE_OF_BUSINESS: req.body.NATURE_OF_BUSINESS,
         SOURCE_OF_FUNDS: req.body.SOURCE_OF_FUNDS,
-
         PERMANENT_ADDRESS_PROOF: req.body.PERMANENT_ADDRESS_PROOF,
         CURRUNT_ADDRESS_PROOF: req.body.CURRUNT_ADDRESS_PROOF,
-
         CONSTITUTION: req.body.CONSTITUTION,
         ID_PROOF: req.body.ID_PROOF,
         ID_PROOF_NUMBER: req.body.ID_PROOF_NUMBER,
@@ -103,84 +88,56 @@ function reqData(req) {
         FATHER_OR_SPOUSE: req.body.FATHER_OR_SPOUSE,
         MOTHER_TITLE: req.body.MOTHER_TITLE,
         FATHER_TITLE: req.body.FATHER_TITLE
-        
-        
-    }
-
-    return data;
+    };
 }
 
 exports.get = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    const q = `select * from guardian_information where APPLICANT_ID = ?` + (req.body.APPLICANT_NO ? ' AND APPLICANT_NO = ?' : '');
-    const params = [req.body.APPLICANT_ID];
-    if (req.body.APPLICANT_NO) {
-        params.push(req.body.APPLICANT_NO);
-    }
-
+    const pool = req.db;
     try {
-        const results = await db.executeQueryData(q, params, supportKey);
-        res.send({
-            "code": 200,
-            "message": "OK",
-            "data": results
-        });
+        const { APPLICANT_ID, APPLICANT_NO } = req.body;
+        if (!APPLICANT_ID) {
+            return res.status(400).send({ code: 400, message: "APPLICANT_ID is required" });
+        }
+
+        let q = `SELECT * FROM guardian_information WHERE APPLICANT_ID = ?`;
+        const params = [APPLICANT_ID];
+        if (APPLICANT_NO) {
+            q += ' AND APPLICANT_NO = ?';
+            params.push(APPLICANT_NO);
+        }
+
+        const [rows] = await pool.promise().query(q, params);
+        res.send({ code: 200, message: "OK", data: rows });
     } catch (error) {
-        console.log("error", error);
-        res.status(400).send({
-            "code": 400,
-            "message": "Failed to get guardian information"
-        });
+        console.error("GET GUARDIAN ERROR:", error);
+        res.status(400).send({ code: 400, message: "Failed to get guardian information" });
     }
 };
 
 exports.create = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    const data = reqData(req);
-    const q = `insert into guardian_information set ?`;
-
+    const pool = req.db;
     try {
-        await db.executeQueryData(q, data, supportKey);
-        res.send({
-            "code": 200,
-            "message": "Guardian information saved successfully"
-        });
+        const data = reqData(req);
+        await pool.promise().query(`INSERT INTO guardian_information SET ?`, [data]);
+        res.send({ code: 200, message: "Guardian information saved successfully" });
     } catch (error) {
-        console.log("error", error);
-        res.status(400).send({
-            "code": 400,
-            "message": "Failed to save guardian information"
-        });
+        console.error("CREATE GUARDIAN ERROR:", error);
+        res.status(400).send({ code: 400, message: "Failed to save guardian information" });
     }
 };
 
 exports.update = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    const data = reqData(req);
-    let setData = '';
-    let recData = [];
-
-    Object.keys(data).forEach(key => {
-        setData += `${key} = ? ,`;
-        recData.push(data[key]);
-    });
-
-    setData = setData.slice(0, -1);
-
-    const q = `update guardian_information set ${setData} where ID = ?`;
-    recData.push(req.body.ID);
-
+    const pool = req.db;
     try {
-        await db.executeQueryData(q, recData, supportKey);
-        res.send({
-            "code": 200,
-            "message": "Guardian information updated successfully"
-        });
+        const { ID } = req.body;
+        if (!ID) {
+            return res.status(400).send({ code: 400, message: "ID is required" });
+        }
+        const data = reqData(req);
+        await pool.promise().query(`UPDATE guardian_information SET ? WHERE ID = ?`, [data, ID]);
+        res.send({ code: 200, message: "Guardian information updated successfully" });
     } catch (error) {
-        console.log(error);
-        res.status(400).send({
-            "code": 400,
-            "message": "Failed to update guardian information"
-        });
+        console.error("UPDATE GUARDIAN ERROR:", error);
+        res.status(400).send({ code: 400, message: "Failed to update guardian information" });
     }
 };

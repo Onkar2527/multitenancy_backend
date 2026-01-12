@@ -5,18 +5,18 @@ const dropdownMasterService = require('../services/dropdownMaster');
 
 router
     .post('/get', dropdownMasterService.get)
-    .post('/create', dropdownMasterService.validate(), dropdownMasterService.create)
-    .post('/update', dropdownMasterService.validate(), dropdownMasterService.update)
-    .post('/delete', dropdownMasterService.validate(), dropdownMasterService.delete)
+    .post('/create', dropdownMasterService.create)
+    .post('/update', dropdownMasterService.update)
+    .post('/delete', dropdownMasterService.delete)
 
     .post('/getFields', dropdownMasterService.getFields)
-    .post('/createFields', dropdownMasterService.validate(), dropdownMasterService.createFields)
-    .post('/updateFields', dropdownMasterService.validate(), dropdownMasterService.updateFields)
-    .post('/deleteFields', dropdownMasterService.validate(), dropdownMasterService.deleteFields)
+    .post('/createFields', dropdownMasterService.createFields)
+    .post('/updateFields', dropdownMasterService.updateFields)
+    .post('/deleteFields', dropdownMasterService.deleteFields)
 
     .post('/getValues', dropdownMasterService.getValues)
-    .post('/createValues', dropdownMasterService.validate(), dropdownMasterService.createValues)
-    .post('/updateValues', dropdownMasterService.validate(), dropdownMasterService.updateValues)
-    .post('/deleteValues', dropdownMasterService.validate(), dropdownMasterService.deleteValues)
+    .post('/createValues', dropdownMasterService.createValues)
+    .post('/updateValues', dropdownMasterService.updateValues)
+    .post('/deleteValues', dropdownMasterService.deleteValues)
 
 module.exports = router;

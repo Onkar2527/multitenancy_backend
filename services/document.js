@@ -1,47 +1,54 @@
-const db = require('../utilities/dbModule');
+const reqData = (req) => {
+    return {
+        DOCUMENT_GROUP_ID: req.body.DOCUMENT_GROUP_ID,
+        DOCUMENT_NAME: req.body.DOCUMENT_NAME
+    };
+};
 
-function reqData(req){
-    data = {
-
-        DOCUMENT_GROUP_ID : req.body.DOCUMENT_GROUP_ID,
-        DOCUMENT_NAME : req.body.DOCUMENT_NAME
-        
-    }
-    return data;
-}
-
+// -------------------------------
+// GET ALL DOCUMENTS (BANK DB)
 exports.get = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
     try {
-        const result = await db.executeQuery(`select * from document_master where 1`, supportKey);
-        res.send({
-            "code": 200,
-            "message": "ok",
-            "data": result
+        const [rows] = await req.db.promise().query(`SELECT * FROM document_master`);
+
+        return res.send({
+            code: 200,
+            message: 'ok',
+            data: rows
         });
     } catch (error) {
-        console.log("error", error);
-        res.status(400).send({
-            "code": 400,
-            "message": "failed to get documents"
+        console.error('❌ GET DOCUMENTS ERROR:', error);
+        return res.status(500).send({
+            code: 500,
+            message: 'failed to get documents'
         });
     }
 };
 
+// -------------------------------
+// CREATE DOCUMENT (BANK DB)
 exports.create = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    const data = reqData(req);
     try {
-        await db.executeQueryData(`insert into document_master set ?`, data, supportKey);
-        res.send({
-            "code": 200,
-            "message": "Document record inserted successfully."
+        const data = reqData(req);
+
+        if (!data.DOCUMENT_NAME) {
+            return res.status(400).send({
+                code: 400,
+                message: 'DOCUMENT_NAME is required'
+            });
+        }
+
+        await req.db.promise().query(`INSERT INTO document_master SET ?`, data);
+
+        return res.send({
+            code: 200,
+            message: 'Document record inserted successfully.'
         });
     } catch (error) {
-        console.log("error", error);
-        res.status(400).send({
-            "code": 400,
-            "message": "Failed to insert document record"
+        console.error('❌ CREATE DOCUMENT ERROR:', error);
+        return res.status(500).send({
+            code: 500,
+            message: 'Failed to insert document record'
         });
     }
 };

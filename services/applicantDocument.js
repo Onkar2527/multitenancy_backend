@@ -1,10 +1,9 @@
-const db = require('../utilities/dbModule')
+const db = require('../utilities/dbModule');
 const fs = require('fs');
 const path = require('path');
-const async = require('async');
 
 function reqData(req) {
-    data = {
+    return {
         APPLICANT_ID: req.body.APPLICANT_ID,
         APPLICANT_NO: req.body.APPLICANT_NO,
         DOCUMENT_NAME: req.body.DOCUMENT_NAME,
@@ -15,181 +14,117 @@ function reqData(req) {
         IS_APPROVED_CHECKER: req.body.IS_APPROVED_CHECKER ? 1 : 0,
         IS_APPROVED_VERIFIER: req.body.IS_APPROVED_VERIFIER ? 1 : 0,
         REFILL_COUNT: req.body.REFILL_COUNT
-
-    }
-
-    return data
+    };
 }
 
-// exports.get = (req, res) =>{
-//     const supportKey = req.headers['supportkey'];
-//     let data = reqData(req);
-
-//     db.executeQueryData(`select * from applicant_documents where 1 AND APPLICANT_ID = ?`+ (req.body.APPLICANT_NO ? `APPLICANT_NO = ${req.body.APPLICANT_NO}`: ''), [data.APPLICANT_ID], supportKey, (error, applicantDocumentsRes)=>{
-//         if(error)
-//         {
-//             console.log("error", error);
-//             res.send({
-//                 "code": 400,
-//                 "message": "Failed to get document details."
-//             })
-//         }
-//         else{
-//             res.send({
-//                 "code": 200,
-//                 "message": "ok",
-//                 "data": applicantDocumentsRes
-//             })
-//         }
-//     })
-// }
-
 exports.getAllApplicants = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    const { APPLICANT_ID, APPLICANT_NO } = req.body;
-    
-    let query = `select * from applicant_documents where APPLICANT_ID = ? `;
-    const params = [APPLICANT_ID];
-
-    if (APPLICANT_NO) {
-        query += `AND APPLICANT_NO = ? `;
-        params.push(APPLICANT_NO);
-    }
-
+    const pool = req.db;
     try {
-        const applicantsDocResult = await db.executeQueryData(query, params, supportKey);
-
-        if (applicantsDocResult.length > 0) {
-            const resultsArray = await Promise.all(applicantsDocResult.map(async (applicant) => {
-                if (applicant.FILE_LINK) {
-                    try {
-                        applicant.IMAGE_DATA = await fs.promises.readFile(applicant.FILE_LINK, { encoding: "utf-8" });
-                    } catch (error) {
-                        console.log(error);
-                        applicant.IMAGE_DATA = "";
-                    }
-                }
-                return applicant;
-            }));
-            res.send({ "code": 200, "data": resultsArray });
-        } else {
-            console.log("applicant record doesn't exist");
-            res.send({ "code": 200, "data": [] });
+        const { APPLICANT_ID, APPLICANT_NO } = req.body;
+        if (!APPLICANT_ID) {
+            return res.status(400).send({ code: 400, message: "APPLICANT_ID is required" });
         }
+
+        let query = `SELECT * FROM applicant_documents WHERE APPLICANT_ID = ?`;
+        const params = [APPLICANT_ID];
+
+        if (APPLICANT_NO) {
+            query += ` AND APPLICANT_NO = ?`;
+            params.push(APPLICANT_NO);
+        }
+
+        const [rows] = await pool.promise().query(query, params);
+
+        const resultsArray = await Promise.all(rows.map(async (doc) => {
+            if (doc.FILE_LINK && fs.existsSync(doc.FILE_LINK)) {
+                try {
+                    doc.IMAGE_DATA = await fs.promises.readFile(doc.FILE_LINK, { encoding: "utf-8" });
+                } catch (e) {
+                    doc.IMAGE_DATA = "";
+                }
+            }
+            return doc;
+        }));
+
+        res.send({ code: 200, data: resultsArray });
     } catch (error) {
-        console.log("error", error);
-        res.status(400).send({
-            "code": 400,
-            "message": "failed to get applicant document information"
-        });
+        console.error("GET APPLICANT DOCS ERROR:", error);
+        res.status(400).send({ code: 400, message: "Failed to get applicant documents" });
     }
 };
 
-
 exports.create = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    let data = reqData(req);
-
+    const pool = req.db;
     try {
-        await db.executeQueryData(`insert into applicant_documents set ?`, data, supportKey);
-        res.send({
-            "code": 200,
-            "message": "Document details saved successfully"
-        });
+        const data = reqData(req);
+        await pool.promise().query(`INSERT INTO applicant_documents SET ?`, [data]);
+        res.send({ code: 200, message: "Document details saved successfully" });
     } catch (error) {
-        console.log("error", error);
-        res.status(400).send({
-            "code": 400,
-            "message": "Failed to insert document details."
-        });
+        console.error("CREATE APPLICANT DOC ERROR:", error);
+        res.status(400).send({ code: 400, message: "Failed to save document details" });
     }
 };
 
 exports.update = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    let data = reqData(req);
-    let setData = '';
-    let recData = [];
-
-    Object.keys(data).forEach(key => {
-        setData += `${key} = ? ,`;
-        recData.push(data[key]);
-    });
-
-    setData = setData.slice(0, -1);
-    const query = `update applicant_documents set ${setData} where ID = ?`;
-    recData.push(req.body.ID);
-
+    const pool = req.db;
     try {
-        await db.executeQueryData(query, recData, supportKey);
-        res.send({
-            "code": 200,
-            "message": "Information saved successfully."
-        });
+        const data = reqData(req);
+        const { ID } = req.body;
+        if (!ID) {
+            return res.status(400).send({ code: 400, message: "ID is required" });
+        }
+        await pool.promise().query(`UPDATE applicant_documents SET ? WHERE ID = ?`, [data, ID]);
+        res.send({ code: 200, message: "Document updated successfully" });
     } catch (error) {
-        console.log("error", error);
-        res.status(400).send({
-            "code": 400,
-            "message": "Failed to update applicant information."
-        });
+        console.error("UPDATE APPLICANT DOC ERROR:", error);
+        res.status(400).send({ code: 400, message: "Failed to update document" });
     }
 };
 
-
-
 exports.uploadDocument = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    let connection;
+    const pool = req.db;
     try {
-        connection = await db.openConnection();
-        const applicantDocumentRes = await db.executeQueryData(`select * from applicant_documents where 1 AND ID = ?`, [req.body.ID], supportKey);
+        const { ID, IMAGE_DATA, APPLICANT_ID, APPLICANT_NO, DOCUMENT_NAME, FILE_TYPE, MAKER_REMARK } = req.body;
 
-        if (applicantDocumentRes.length === 0) {
-            return res.status(404).send({
-                "code": 404,
-                "message": "Unable to find document"
-            });
+        const [docs] = await pool.promise().query(`SELECT * FROM applicant_documents WHERE ID = ?`, [ID]);
+        if (docs.length === 0) {
+            return res.status(404).send({ code: 404, message: "Document not found" });
         }
 
-        let filePath = applicantDocumentRes[0].FILE_LINK;
+        let filePath = docs[0].FILE_LINK;
         if (!filePath) {
-            filePath = './uploads/applicantDocuments/' + genrateRandomKey(32) + '.' + 'jpg';
+            const uploadDir = './uploads/applicantDocuments/';
+            if (!fs.existsSync(uploadDir)) {
+                fs.mkdirSync(uploadDir, { recursive: true });
+            }
+            filePath = path.join(uploadDir, `${genrateRandomKey(32)}.jpg`);
         }
 
-        await fs.promises.writeFile(filePath, req.body.IMAGE_DATA, { flag: 'w' });
+        await fs.promises.writeFile(filePath, IMAGE_DATA, { flag: 'w' });
 
-        const updateQuery = `update applicant_documents set APPLICANT_ID=?, APPLICANT_NO=?, DOCUMENT_NAME=?, FILE_TYPE=?, FILE_LINK=?, MAKER_REMARK=?, IS_APPROVED_CHECKER = ?, IS_APPROVED_VERIFIER = ? where ID = ?`;
-        const updateParams = [req.body.APPLICANT_ID, req.body.APPLICANT_NO, req.body.DOCUMENT_NAME, req.body.FILE_TYPE, filePath, req.body.MAKER_REMARK, req.body.IS_APPROVED_CHECKER, req.body.IS_APPROVED_VERIFIER, req.body.ID];
-        await db.executeQueryData(updateQuery, updateParams, supportKey);
+        const updateData = {
+            APPLICANT_ID,
+            APPLICANT_NO,
+            DOCUMENT_NAME,
+            FILE_TYPE,
+            FILE_LINK: filePath,
+            MAKER_REMARK
+        };
 
-        await db.commitConnection(connection);
-        res.send({
-            "code": 200,
-            "message": "Document details saved successfully"
-        });
+        await pool.promise().query(`UPDATE applicant_documents SET ? WHERE ID = ?`, [updateData, ID]);
 
+        res.send({ code: 200, message: "Document uploaded successfully" });
     } catch (error) {
-        console.log("Error in uploadDocument:", error);
-        if (connection) {
-            await db.rollbackConnection(connection);
-        }
-        res.status(400).send({
-            "code": 400,
-            "message": "Failed to save document."
-        });
+        console.error("UPLOAD DOC ERROR:", error);
+        res.status(400).send({ code: 400, message: "Failed to upload document" });
     }
-}
-
+};
 
 function genrateRandomKey(length) {
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789$-#@&';
+    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let result = "";
-    const charactersLength = characters.length;
     for (let i = 0; i < length; i++) {
-        result += characters.charAt(Math.floor(Math.random() * charactersLength));
+        result += characters.charAt(Math.floor(Math.random() * characters.length));
     }
-
     return result;
-
-
 }

@@ -1,28 +1,23 @@
-const db = require('../utilities/dbModule');
-
 const status_table = 'track_master';
 
+// -------------------------------
+// GET STATUS LIST (BANK DB)
 exports.getList = async (req, res) => {
     try {
-        let filter = ' AND VISIBLE = 1';
-        let supportKey = req.headers['supportkey'];
+        const [rows] = await req.db.promise().query(
+            `SELECT * FROM ${status_table} WHERE VISIBLE = 1`
+        );
 
-        let query = `select * from ${status_table} where 1 ${filter}`
-
-        let result = await db.executeQuery(query, supportKey);
-
-        res.send({
-            "message": "success",
-            "code": 200,
-            "data": result
-        })
+        return res.send({
+            code: 200,
+            message: "success",
+            data: rows
+        });
+    } catch (error) {
+        console.error('❌ GET STATUS ERROR:', error);
+        return res.status(500).send({
+            code: 500,
+            message: "Failed to get status"
+        });
     }
-    catch (error) {
-        console.log(error);
-        res.send({
-            "message": "Failed to get status",
-            "code": 400
-        })
-    }
-
-}
+};

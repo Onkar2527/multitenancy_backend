@@ -91,35 +91,36 @@ router
     .use('/api/emailVerification', require('./emailVerification'))
     .use('/api/aadhaar', require('./aadhaar'))
 
-// components
-.use('/api/componunts', require('./componunt'))
+    // components
+    .use('/api/componunts', require('./componunt'))
 
-.use('/api/tabs', require('./tabs'))
+    .use('/api/tabs', require('./tabs'))
     .use('/api/extraInformation', require('./extraInformation'))
     .use('/api/applicantDocuments', require('./applicantDocument'))
 
-.use('/api/applicantsPhoto', require('./applicantsPhoto'))
+    .use('/api/applicantsPhoto', require('./applicantsPhoto'))
     .use('/api/addressInformation', require('./addressInformation'))
     .use('/api/pan', require('./panVerifiendList'))
     .use('/api/voterId', require('./voterIdVerification'))
     .use('/api/license', require('./license'))
 
-.use('/api/pincode', require('./pincode'))
+    .use('/api/pincode', require('./pincode'))
 
-.use('/api/status', require('./status'))
+    .use('/api/status', require('./status'))
     .use('/api/remark', require('./remark'))
 
-.use('/api/dropdownMaster', require('./dropdownMaster'))
+    .use('/api/dropdownMaster', require('./dropdownMaster'))
     .use('/api/branch', require('./branch'))
 
-.use('/api/list_api', require('./list_api/api'))
+    .use('/api/list_api', require('./list_api/api'))
     .use('/api/doc_verify', require('./doc_verify_api/doc_verify_api'))
 
-.use('/api/passwordPolicy', require('./password_policy'))
+    .use('/api/passwordPolicy', require('./password_policy'))
 
-// guardian
-.use('/api/guardianInfo', require('./guardianInformation'))
-    .use('/api/guardianDocument', require('./guardianDocument'));
+    // guardian
+    .use('/api/guardianInfo', require('./guardianInformation'))
+    .use('/api/guardianDocument', require('./guardianDocument'))
+    .use('/api/bank', require('./bank'));
 
 module.exports = router;
 

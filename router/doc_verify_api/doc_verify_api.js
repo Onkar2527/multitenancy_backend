@@ -4,7 +4,8 @@ const router = express();
 
 router
     .post('/checkSufBal', require('../../services/doc_verify_api/balance').checkSufficientBalance)
-    .post('/setBalance', require('../../services/doc_verify_api/balance').updateBalanceE)
+    .post('/setBalance', require('../../services/doc_verify_api/balance').setBalance)
+    .post('/addBalance', require('../../services/doc_verify_api/balance').addBalance)
     .post('/getBalance', require('../../services/doc_verify_api/balance').getBalanceE)
 
     .post('/hit', require('../../services/doc_verify_api/doc_verify_info').hit)

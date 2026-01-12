@@ -1,9 +1,7 @@
 const db = require('../utilities/dbModule');
 
-
-
 function reqData(req) {
-    data = {
+    return {
         CLIENT_ID: req.body.CLIENT_ID,
         EPIC_NO: req.body.EPIC_NO,
         GENDER: req.body.GENDER,
@@ -36,78 +34,84 @@ function reqData(req) {
         ST_CODE: req.body.ST_CODE,
         PARLIAMENTARY_CONSTITUENCY: req.body.PARLIAMENTARY_CONSTITUENCY,
         IS_VERIFIED: req.body.IS_VERIFIED ? 1 : 0
-
-    }
-
-    return data;
+    };
 }
 
 exports.get = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    const q = `select * from voterid_verification_master where EPIC_NO = ?`;
+    const pool = req.db;
     try {
-        const results = await db.executeQueryData(q, [req.body.EPIC_NO], supportKey);
+        const { EPIC_NO } = req.body;
+        if (!EPIC_NO) {
+            return res.send({ code: 200, message: "OK", data: [] });
+        }
+        const q = `SELECT * FROM voterid_verification_master WHERE EPIC_NO = ?`;
+        const [results] = await pool.promise().query(q, [EPIC_NO]);
         res.send({
-            "code": 200,
-            "message": "OK",
-            "data": results
+            code: 200,
+            message: "OK",
+            data: results
         });
     } catch (error) {
-        console.log(error);
+        console.error("VOTER GET ERROR:", error);
         res.status(400).send({
-            "code": 400,
-            "message": "Failed to get voter verification info"
+            code: 400,
+            message: "Failed to get voter verification info"
         });
     }
 };
 
 exports.create = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    const data = reqData(req);
-    const q = `insert into voterid_verification_master set ?`;
-
+    const pool = req.db;
+    let connection;
     try {
-        await db.executeQueryData(q, data, supportKey);
+        const data = reqData(req);
+        connection = await pool.promise().getConnection();
+        await connection.beginTransaction();
+
+        await connection.query(`INSERT INTO voterid_verification_master SET ?`, [data]);
+
+        await connection.commit();
         res.send({
-            "code": 200,
-            "message": "Voter information saved successfully"
+            code: 200,
+            message: "Voter information saved successfully"
         });
     } catch (error) {
-        console.log("error", error);
+        console.error("VOTER CREATE ERROR:", error);
+        if (connection) await connection.rollback();
         res.status(400).send({
-            "code": 400,
-            "message": "Failed to save voter info"
+            code: 400,
+            message: "Failed to save voter info"
         });
+    } finally {
+        if (connection) connection.release();
     }
 };
 
 exports.update = async (req, res) => {
-    const supportKey = req.headers['supportkey'];
-    const data = reqData(req);
-    let setData = '';
-    let recData = [];
-
-    Object.keys(data).forEach(key => {
-        setData += `${key} = ? ,`;
-        recData.push(data[key]);
-    });
-
-    setData = setData.slice(0, -1);
-
-    const q = `update voterid_verification_master set ${setData} where ID = ?`;
-    recData.push(req.body.ID);
-
+    const pool = req.db;
+    let connection;
     try {
-        await db.executeQueryData(q, recData, supportKey);
+        const { ID } = req.body;
+        const data = reqData(req);
+
+        connection = await pool.promise().getConnection();
+        await connection.beginTransaction();
+
+        await connection.query(`UPDATE voterid_verification_master SET ? WHERE ID = ?`, [data, ID]);
+
+        await connection.commit();
         res.send({
-            "code": 200,
-            "message": "Voter information updated successfully"
+            code: 200,
+            message: "Voter information updated successfully"
         });
     } catch (error) {
-        console.log(error);
+        console.error("VOTER UPDATE ERROR:", error);
+        if (connection) await connection.rollback();
         res.status(400).send({
-            "code": 400,
-            "message": "Failed to update voter info"
+            code: 400,
+            message: "Failed to update voter info"
         });
+    } finally {
+        if (connection) connection.release();
     }
 };
