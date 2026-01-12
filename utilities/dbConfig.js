@@ -7,7 +7,12 @@ const masterPool = mysql.createPool({
     password: process.env.MASTER_DB_PASSWORD,
     database: process.env.MASTER_DB_NAME,
     port: process.env.MASTER_DB_PORT,
-    dateStrings: true
+    dateStrings: true,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10000,
+    waitForConnections: true,
+    idleTimeout: 60000,
+    maxIdle: 10
 });
 
 
@@ -48,7 +53,12 @@ async function initBankPools() {
                     password: process.env.MYSQL_PASSWORD,
                     database: bank.DB_NAME,
                     port: process.env.MYSQL_PORT,
-                    dateStrings: true
+                    dateStrings: true,
+                    enableKeepAlive: true,
+                    keepAliveInitialDelay: 10000,
+                    waitForConnections: true,
+                    idleTimeout: 60000,
+                    maxIdle: 10
                 });
 
                 bankAppPools.push({
@@ -68,7 +78,12 @@ async function initBankPools() {
                     password: process.env.CBS_DB_PASSWORD,
                     database: bank.CBS_DB_NAME,
                     port: process.env.CBS_DB_PORT,
-                    dateStrings: true
+                    dateStrings: true,
+                    enableKeepAlive: true,
+                    keepAliveInitialDelay: 10000,
+                    waitForConnections: true,
+                    idleTimeout: 60000,
+                    maxIdle: 10
                 });
 
                 bankCbsPools.push({
