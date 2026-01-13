@@ -195,6 +195,7 @@ exports.create = async (req, res) => {
 
         data.MAKER_USER_ID = user.USER_ID;
         data.CREATED_BRANCH_ID = user.BRANCH_ID;
+        data.TRACK_ID = data.TRACK_ID || 1; // Defensive default
 
         connection = await pool.promise().getConnection();
         await connection.beginTransaction();
