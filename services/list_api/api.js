@@ -52,8 +52,7 @@ async function generateToken(req) {
         const token = response.data.token || response.data;
 
         await pool.query(
-            `INSERT INTO ${table} (TOKEN, IS_EXPIRED, CREATED_DATE) VALUES (?, 0, NOW())`,
-            [token]
+            `INSERT INTO ${table} (TOKEN, IS_EXPIRED, CREATED_DATE) VALUES (?, 0, NOW())`, [token]
         );
 
         return token;
@@ -66,7 +65,7 @@ async function generateToken(req) {
 
 function getRequest(url, config) {
 
-    let promise = new Promise(async (resolve, reject) => {
+    let promise = new Promise(async(resolve, reject) => {
         try {
             let result = await axios.get(url, config);
             // // console.log("result",result)
@@ -154,7 +153,7 @@ exports.syncMasters = () => {
         rule.tz = 'Asia/Calcutta';
 
         console.log("inside synce")
-        // const job = schedule.scheduleJob(rule, cacheMasters);
+            // const job = schedule.scheduleJob(rule, cacheMasters);
         var job = schedule.scheduleJob(" 1 1 23 * * 0", cacheMasters);
         console.log("job", job)
     } catch (error) {
@@ -204,7 +203,7 @@ function returnInsertQ(obj) {
 
 }
 
-exports.onBoardCustomer = async (req, res) => {
+exports.onBoardCustomer = async(req, res) => {
     try {
         const applicant_id = req.body.APPLICANT_ID;
         const pool = req.db;
@@ -237,16 +236,32 @@ exports.onBoardCustomer = async (req, res) => {
         const guardianDocumentQ = `select * from ?? where APPLICANT_ID = ? AND APPLICANT_NO = 2`;
 
 
-        const [[basicR]] = await pool.promise().query(basicQ, [basicT, applicant_id]);
-        const [[personalR]] = await pool.promise().query(personalQ, [personalT, applicant_id]);
-        const [[depositR]] = await pool.promise().query(depositQ, [depositT, applicant_id]);
-        const [[serviceR]] = await pool.promise().query(serviceQ, [serviceT, applicant_id]);
-        const [[financeR]] = await pool.promise().query(financeQ, [financeT, applicant_id]);
+        const [
+            [basicR]
+        ] = await pool.promise().query(basicQ, [basicT, applicant_id]);
+        const [
+            [personalR]
+        ] = await pool.promise().query(personalQ, [personalT, applicant_id]);
+        const [
+            [depositR]
+        ] = await pool.promise().query(depositQ, [depositT, applicant_id]);
+        const [
+            [serviceR]
+        ] = await pool.promise().query(serviceQ, [serviceT, applicant_id]);
+        const [
+            [financeR]
+        ] = await pool.promise().query(financeQ, [financeT, applicant_id]);
         const [documentR] = await pool.promise().query(documentQ, [documentT, applicant_id]);
-        const [[nomineeR]] = await pool.promise().query(nomineeQ, [nomineeT, applicant_id]);
+        const [
+            [nomineeR]
+        ] = await pool.promise().query(nomineeQ, [nomineeT, applicant_id]);
 
-        const [[guardianR]] = await pool.promise().query(guardianQ, [personalT, applicant_id]);
-        const [[guardianFinanceR]] = await pool.promise().query(guardianFinanceQ, [financeT, applicant_id]);
+        const [
+            [guardianR]
+        ] = await pool.promise().query(guardianQ, [personalT, applicant_id]);
+        const [
+            [guardianFinanceR]
+        ] = await pool.promise().query(guardianFinanceQ, [financeT, applicant_id]);
         const [guardianDocumentR] = await pool.promise().query(guardianDocumentQ, [documentT, applicant_id]);
 
         if (!basicR) {
@@ -1139,7 +1154,7 @@ async function getUserNameByID(pool, id) {
 
 // }
 
-exports.getMasters = async (req, res) => {
+exports.getMasters = async(req, res) => {
     try {
 
         // 🔒 CBS DB available आहे का?
@@ -1231,7 +1246,11 @@ function Relation(code) {
 
 }
 
-exports.getCustomer = async (req, res) => {
+ const proxy = {
+     host: '127.0.0.1', // proxy server
+     port: 8080
+ };
+exports.getCustomer = async(req, res) => {
     try {
         let search_mode = req.body.mode;
         let search_key = 'customerCode';
