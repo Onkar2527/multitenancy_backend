@@ -36,6 +36,11 @@ function reqData(req) {
         CASTE: req.body.CASTE,
         OTHER_CASTE: req.body.OTHER_CASTE,
         OTHER_RELIGION: req.body.OTHER_RELIGION,
+        OTHER_WORK: req.body.OTHER_WORK,
+        OTHER_ESTABLISHMENT: req.body.OTHER_ESTABLISHMENT,
+        OTHER_EMPLOYMENT_DETAIL: req.body.OTHER_EMPLOYMENT_DETAIL,
+        OTHER_PROPRIETOR_DETAILS: req.body.OTHER_PROPRIETOR_DETAILS,
+        OTHER_BUSINESS_DETAIL: req.body.OTHER_BUSINESS_DETAIL,
         MARITAL_STATUS: req.body.MARITAL_STATUS,
         FAMILY_COUNT: req.body.FAMILY_COUNT,
         EDUCATION: req.body.EDUCATION,
@@ -85,13 +90,16 @@ function reqData(req) {
         OFFICE_LANDMARK: req.body.OFFICE_LANDMARK,
         OFFICE_STATE: req.body.OFFICE_STATE,
         OFFICE_PINCODE: req.body.OFFICE_PINCODE,
-        OFFICE_AREA: req.body.OFFICE_AREA
+        OFFICE_AREA: req.body.OFFICE_AREA,
+        MOTHERS_LAST_NAME: req.body.MOTHERS_LAST_NAME,
+        MOTHERS_MIDDLE_NAME: req.body.MOTHERS_MIDDLE_NAME,
+        MOTHERS_NAME: req.body.MOTHERS_NAME
     };
 }
 
 // -------------------------------
 // GET applicant personal details
-exports.get = async (req, res) => {
+exports.get = async(req, res) => {
     try {
         const pool = req.db;
         const { APPLICANT_ID, APPLICANT_NO } = req.body;
@@ -118,7 +126,7 @@ exports.get = async (req, res) => {
 
 // -------------------------------
 // CREATE applicant personal details
-exports.create = async (req, res) => {
+exports.create = async(req, res) => {
     const pool = req.db;
     try {
         const data = reqData(req);
@@ -135,7 +143,7 @@ exports.create = async (req, res) => {
 
 // -------------------------------
 // UPDATE applicant personal details
-exports.update = async (req, res) => {
+exports.update = async(req, res) => {
     const pool = req.db;
     try {
         const data = reqData(req);

@@ -19,7 +19,10 @@ exports.login = async (req, res) => {
         }
 
         const users = await db.executeMasterQuery(
-            `SELECT * FROM user_master WHERE BINARY USER_NAME = ? AND BINARY PASSWORD = ? AND IS_ACTIVE = 1`,
+            `SELECT u.*, b.BRANCH_NAME 
+             FROM user_master u 
+             LEFT JOIN branch_master b ON u.BRANCH_ID = b.ID 
+             WHERE BINARY u.USER_NAME = ? AND BINARY u.PASSWORD = ? AND u.IS_ACTIVE = 1`,
             [username, password]
         );
 
@@ -37,6 +40,14 @@ exports.login = async (req, res) => {
             `UPDATE user_master SET LAST_LOGIN_TIME = ? WHERE ID = ?`,
             [current_dt, user.ID]
         );
+
+        // ... (password policy logic omitted for brevity, but stays same) ...
+        // Note: I will only replace the parts I need to change or keep the context.
+        // Actually I should be careful not to delete the policy logic.
+
+        // I will use multi_replace for better precision if needed, but I'll try to include the relevant part here.
+
+        // Wait, I better use multi_replace to avoid mess.
 
         // Fetch Password Policy per BANK_ID
         const policies = await db.executeMasterQuery(
@@ -98,9 +109,11 @@ exports.login = async (req, res) => {
         // Standard Success Response
         const tokenPayload = {
             USER_ID: user.ID,
+            USER_NAME: user.USER_NAME,
             BANK_ID: user.BANK_ID,
             ROLE_ID: user.ROLE_ID,
-            BRANCH_ID: user.BRANCH_ID
+            BRANCH_ID: user.BRANCH_ID,
+            BRANCH_NAME: user.BRANCH_NAME
         };
 
         const token = jwt.sign(
@@ -117,6 +130,7 @@ exports.login = async (req, res) => {
                 BANK_ID: user.BANK_ID,
                 ROLE_ID: user.ROLE_ID,
                 BRANCH_ID: user.BRANCH_ID,
+                BRANCH_NAME: user.BRANCH_NAME,
                 NAME: user.NAME,
                 USER_NAME: user.USER_NAME,
                 LAST_LOGIN_TIME: current_dt

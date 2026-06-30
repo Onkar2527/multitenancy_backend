@@ -4,7 +4,8 @@ const db = require('../utilities/dbModule');
 // GET PASSWORD POLICY (MASTER DB - BANK SPECIFIC)
 exports.get = async (req, res) => {
     try {
-        const BANK_ID = req.user?.BANK_ID;
+        // 🔐 If user is not logged in (forced reset flow), get BANK_ID from query parameters
+        const BANK_ID = req.user?.BANK_ID || req.query.BANK_ID;
 
         if (!BANK_ID) {
             return res.status(401).send({

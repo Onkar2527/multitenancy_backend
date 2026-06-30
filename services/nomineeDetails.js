@@ -126,3 +126,36 @@ exports.update = async (req, res) => {
         });
     }
 };
+
+// -------------------------------
+// DELETE Nominee
+exports.delete = async (req, res) => {
+    try {
+        const { ID } = req.body;
+
+        if (!ID) {
+            return res.status(400).send({
+                code: 400,
+                message: 'ID is required'
+            });
+        }
+
+        await req.db.promise().query(
+            `DELETE FROM nominee_details WHERE ID = ?`,
+            [ID]
+        );
+
+        return res.send({
+            code: 200,
+            message: 'Nominee Details deleted successfully'
+        });
+
+    } catch (error) {
+        console.error('❌ NOMINEE DELETE ERROR:', error);
+        return res.status(500).send({
+            code: 500,
+            message: 'Failed to delete Nominee Details'
+        });
+    }
+};
+

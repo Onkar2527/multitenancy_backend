@@ -1,13 +1,14 @@
 const reqData = (req) => {
     return {
         DOCUMENT_GROUP_ID: req.body.DOCUMENT_GROUP_ID,
-        DOCUMENT_NAME: req.body.DOCUMENT_NAME
+        DOCUMENT_NAME: req.body.DOCUMENT_NAME,
+        CBS_ID: req.body.CBS_ID || req.body.CBS_DOCUMENT_ID || null
     };
 };
 
 // -------------------------------
 // GET ALL DOCUMENTS (BANK DB)
-exports.get = async (req, res) => {
+exports.get = async(req, res) => {
     try {
         const [rows] = await req.db.promise().query(`SELECT * FROM document_master`);
 
@@ -27,7 +28,7 @@ exports.get = async (req, res) => {
 
 // -------------------------------
 // CREATE DOCUMENT (BANK DB)
-exports.create = async (req, res) => {
+exports.create = async(req, res) => {
     try {
         const data = reqData(req);
 

@@ -33,7 +33,7 @@ async function initBankPools() {
         const promiseMaster = masterPool.promise();
 
         const [banks] = await promiseMaster.query(`
-            SELECT ID, DB_NAME, CBS_DB_NAME
+            SELECT ID, BANK_NAME, DB_NAME, CBS_DB_NAME, CBS_API_HOST, CBS_API_PORT, CBS_BRANCH_NAME, CBS_CALLER_SYSTEM
             FROM bank_master
             WHERE IS_ACTIVE = 1
         `);
@@ -63,7 +63,13 @@ async function initBankPools() {
 
                 bankAppPools.push({
                     bank_id: Number(bank.ID),
-                    pool: appPool
+                    bank_name: bank.BANK_NAME,
+                    pool: appPool,
+                    cbsApiHost: bank.CBS_API_HOST,
+                    cbsApiPort: bank.CBS_API_PORT,
+                    // 🔴 Dynamic Multitenancy Configuration
+                    cbsBranchName: bank.CBS_BRANCH_NAME,
+                    cbsCallerSystem: bank.CBS_CALLER_SYSTEM
                 });
 
                 console.log(`✅ APP DB connected : ${bank.DB_NAME} (ID: ${bank.ID})`);
@@ -123,11 +129,29 @@ function getBankCbsPool(bankId) {
     return obj.pool;
 }
 
+function getBankConfig(bankId) {
+    const id = Number(bankId);
+    const obj = bankAppPools.find(b => b.bank_id === id);
+    if (!obj) {
+        console.error(`❌ Invalid BANK_ID (Config): ${bankId}`);
+        return null;
+    }
+    return {
+        bankName: obj.bank_name,
+        cbsApiHost: obj.cbsApiHost,
+        cbsApiPort: obj.cbsApiPort,
+        // 🔴 Dynamic Fields for Multitenancy
+        cbsBranchName: obj.cbsBranchName,
+        cbsCallerSystem: obj.cbsCallerSystem
+    };
+}
+
 /* ================= EXPORT ================= */
 
 module.exports = {
     masterPool,
     initBankPools,
     getBankAppPool,
-    getBankCbsPool
+    getBankCbsPool,
+    getBankConfig
 };

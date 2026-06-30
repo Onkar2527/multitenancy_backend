@@ -20,7 +20,7 @@ exports.hit = async (req, res) => {
 
         if (balance >= rate) {
             await req.db.promise().query(
-                `INSERT INTO ?? (BRANCH_ID, USER_ID, DOC_TYPE, AMOUNT) VALUES (?, ?, ?, ?)`,
+                `INSERT INTO ?? (BRANCH_ID, USER_ID, TYPE_OF_DOC, AMOUNT_DEDUCTED) VALUES (?, ?, ?, ?)`,
                 [table, BRANCH_ID, USER_ID, DOC_TYPE, rate]
             );
 
@@ -50,6 +50,8 @@ exports.hit = async (req, res) => {
 
 // ------------------------------
 // GET HITS (BANK DB)
+// ------------------------------
+// GET HITS (BANK DB)
 exports.getHits = async (req, res) => {
     try {
         const { BRANCH } = req.body;
@@ -73,22 +75,22 @@ exports.getHits = async (req, res) => {
         let PASSPORT = { hits: 0, amount: 0 };
 
         getHitR.forEach(hit => {
-            const docType = String(hit.DOC_TYPE).toUpperCase();
+            const docType = String(hit.TYPE_OF_DOC).toUpperCase();
             if (docType === 'ADR' || docType === '1') {
                 aadhaar.hits++;
-                aadhaar.amount += hit.AMOUNT;
+                aadhaar.amount += hit.AMOUNT_DEDUCTED;
             } else if (docType === 'PAN' || docType === '2') {
                 PAN.hits++;
-                PAN.amount += hit.AMOUNT;
+                PAN.amount += hit.AMOUNT_DEDUCTED;
             } else if (docType === 'VID' || docType === '3') {
                 VID.hits++;
-                VID.amount += hit.AMOUNT;
+                VID.amount += hit.AMOUNT_DEDUCTED;
             } else if (docType === 'DL' || docType === '4') {
                 DL.hits++;
-                DL.amount += hit.AMOUNT;
+                DL.amount += hit.AMOUNT_DEDUCTED;
             } else if (docType === 'PASSPORT' || docType === '5') {
                 PASSPORT.hits++;
-                PASSPORT.amount += hit.AMOUNT;
+                PASSPORT.amount += hit.AMOUNT_DEDUCTED;
             }
         });
 
@@ -101,7 +103,7 @@ exports.getHits = async (req, res) => {
             LICENSE: { amount: DL.amount, hitCount: DL.hits },
             PASSPORT: { amount: PASSPORT.amount, hitCount: PASSPORT.hits },
             TOTAL_HITS: getHitR.length,
-            TOTAL_DEDUCTION: getHitR.reduce((sum, h) => sum + h.AMOUNT, 0)
+            TOTAL_DEDUCTION: getHitR.reduce((sum, h) => sum + h.AMOUNT_DEDUCTED, 0)
         });
 
     } catch (error) {

@@ -1,11 +1,11 @@
 const mysql = require('mysql2/promise');
-const config = require('./config').config
+const { masterPool } = require('../../utilities/dbConfig');
 const axios = require('axios');
 const db = require('../../utilities/dbModule');
 const fs = require('fs/promises')
 const schedule = require('node-schedule')
 
-const mode = config.mode;
+// const mode = config.mode; // 🔴 Removed config.js dependency
 async function getJWTToken(req) {
     if (!req.cbsDb) {
         throw new Error('CBS DB pool missing in request');
@@ -40,11 +40,20 @@ async function generateToken(req) {
 
     const pool = req.cbsDb.promise();
     const table = `jwt_token`;
-    const tokenUrl = `${config[mode].api.host}:${config[mode].api.port}${config[mode].api.routes[0].url}`;
+
+    // 🌐 DYNAMIC CBS URL (Multitenancy)
+    const host = req.cbsApiHost; // No fallback to static config
+    const port = req.cbsApiPort;
+    const tokenUrl = `${host}:${port}/CustomerInfo/api/auth/getJwt`;
 
     try {
         const configuration = {
-            headers: { "userName": 'cpc', "bankName": "Ajara", "branchName": "Uttur", "callerSystem": "FCO" }
+            headers: {
+                "UserName": req.userName || 'cpc',
+                "BankName": req.bankName || "Ajara",
+                "BranchName": req.cbsBranchName || "Uttur",
+                "CallerSystem": req.cbsCallerSystem || "System5"
+            }
         };
         // proxy check if needed (skipped for brevity unless explicitly required)
 
@@ -65,7 +74,7 @@ async function generateToken(req) {
 
 function getRequest(url, config) {
 
-    let promise = new Promise(async(resolve, reject) => {
+    let promise = new Promise(async (resolve, reject) => {
         try {
             let result = await axios.get(url, config);
             // // console.log("result",result)
@@ -108,15 +117,24 @@ async function cacheMasters() {
         }
 
 
-        let masterUrl = `${config[mode].api.host}:${config[mode].api.port}${config[mode].api.routes[1].url}${table.ID}`
+        // 🌐 DYNAMIC CBS URL (Multitenancy)
+        const host = req.cbsApiHost;
+        const port = req.cbsApiPort;
+        let masterUrl = `${host}:${port}/MasterLOV/customer/getMasterLOV/${table.ID}`
 
-        let bearerKey = await getJWTToken();
+        let bearerKey = await getJWTToken(req);
         let configuration = {
-            headers: { "Authorization": `Bearer ${bearerKey}`, "userName": `fco`, "bankName": "Ajara", "branchName": "Uttur", "callerSystem": "FCO" }
+            headers: {
+                "Authorization": `Bearer ${bearerKey}`,
+                "UserName": req.userName || `fco`,
+                "BankName": req.bankName || "Ajara",
+                "BranchName": req.cbsBranchName || "Uttur",
+                "CallerSystem": req.cbsCallerSystem || "System5"
+            }
         }
-        if (config[mode].api.isproxy) {
-            configuration.proxy = proxy;
-        }
+        // if (config[mode].api.isproxy) {
+        //     configuration.proxy = proxy;
+        // }
         let masterResult = await getRequest(masterUrl, configuration);
 
         console.log("masterResult", masterResult);
@@ -153,7 +171,7 @@ exports.syncMasters = () => {
         rule.tz = 'Asia/Calcutta';
 
         console.log("inside synce")
-            // const job = schedule.scheduleJob(rule, cacheMasters);
+        // const job = schedule.scheduleJob(rule, cacheMasters);
         var job = schedule.scheduleJob(" 1 1 23 * * 0", cacheMasters);
         console.log("job", job)
     } catch (error) {
@@ -203,7 +221,516 @@ function returnInsertQ(obj) {
 
 }
 
-exports.onBoardCustomer = async(req, res) => {
+// Resolve local document_master.ID to CBS master ID (id_proof_master.ID).
+// If local row has `CBS_ID` it is returned. Otherwise, try to lookup in CBS by name
+// and persist the mapping locally for future calls.
+async function getCbsDocId(req, localDocId) {
+    try {
+        if (!localDocId) return 0;
+
+        const [
+            [localRow]
+        ] = await req.db.promise().query('SELECT ID, DOCUMENT_NAME, CBS_ID FROM document_master WHERE ID = ?', [localDocId]);
+
+        if (!localRow) return 0;
+
+        if (localRow.CBS_ID) return localRow.CBS_ID;
+
+        if (!req.cbsDb) return 0;
+
+        // try to find by name in CBS id_proof_master
+        const name = localRow.DOCUMENT_NAME;
+        if (!name) return 0;
+
+        const [cbsRows] = await req.cbsDb.promise().query('SELECT ID FROM id_proof_master WHERE NAME = ?', [name]);
+
+        if (cbsRows && cbsRows.length > 0) {
+            const cbsId = cbsRows[0].ID;
+            // persist mapping locally
+            await req.db.promise().query('UPDATE document_master SET CBS_ID = ? WHERE ID = ?', [cbsId, localDocId]);
+            return cbsId;
+        }
+
+        return 0;
+    } catch (err) {
+        console.warn('getCbsDocId warning:', err.message || err);
+        return 0;
+    }
+}
+
+// exports.onBoardCustomer = async (req, res) => {
+//     try {
+//         const applicant_id = req.body.APPLICANT_ID;
+//         const pool = req.db;
+
+//         if (!pool) {
+//             return res.status(400).send({
+//                 code: 400,
+//                 message: 'Database pool not found'
+//             });
+//         }
+
+//         const basicT = `basic_details`
+//         const personalT = `applicants_personal_details`
+//         const depositT = `term_deposite`
+//         const serviceT = `facilities`
+//         const documentT = `applicant_documents`
+//         const financeT = `financial_information`
+//         const nomineeT = `nominee_details`
+
+//         const basicQ = `select * from ?? where ID = ?`;
+//         const personalQ = `select * from ?? where APPLICANT_ID = ? AND APPLICANT_NO = 1`;
+//         const depositQ = `select * from ?? where APPLICANT_ID = ?`;
+//         const documentQ = `select * from ?? where APPLICANT_ID = ? AND APPLICANT_NO = 1`;
+//         const serviceQ = `select * from ?? where APPLICANT_ID = ?`;
+//         const financeQ = `select * from ?? where APPLICANT_ID = ? AND APPLICANT_NO = 1`
+//         const nomineeQ = `select * from ?? where APPLICANT_ID = ?`
+
+//         const guardianQ = `select * from ?? where APPLICANT_ID = ? AND APPLICANT_NO = 2`;
+//         const guardianFinanceQ = `select * from ?? where APPLICANT_ID = ? AND APPLICANT_NO = 2`;
+//         const guardianDocumentQ = `select * from ?? where APPLICANT_ID = ? AND APPLICANT_NO = 2`;
+
+
+//         const [
+//             [basicR]
+//         ] = await pool.promise().query(basicQ, [basicT, applicant_id]);
+//         const [
+//             [personalR]
+//         ] = await pool.promise().query(personalQ, [personalT, applicant_id]);
+//         const [
+//             [depositR]
+//         ] = await pool.promise().query(depositQ, [depositT, applicant_id]);
+//         const [
+//             [serviceR]
+//         ] = await pool.promise().query(serviceQ, [serviceT, applicant_id]);
+//         const [
+//             [financeR]
+//         ] = await pool.promise().query(financeQ, [financeT, applicant_id]);
+//         const [documentR] = await pool.promise().query(documentQ, [documentT, applicant_id]);
+//         const [
+//             [nomineeR]
+//         ] = await pool.promise().query(nomineeQ, [nomineeT, applicant_id]);
+
+//         const [
+//             [guardianR]
+//         ] = await pool.promise().query(guardianQ, [personalT, applicant_id]);
+//         const [
+//             [guardianFinanceR]
+//         ] = await pool.promise().query(guardianFinanceQ, [financeT, applicant_id]);
+//         const [guardianDocumentR] = await pool.promise().query(guardianDocumentQ, [documentT, applicant_id]);
+
+//         if (!basicR) {
+//             return res.status(404).send({
+//                 code: 404,
+//                 message: 'Applicant not found'
+//             });
+//         }
+
+//         if (guardianR) {
+//             guardianR.APPLICANTS_DATA =
+//                 (basicR['APPLICANTS_DATA'] || []).find(v => v.APPLICANT_NO == guardianR.APPLICANT_NO) || null;
+//         }
+
+//         const account_opening_data = {
+//             "custobj": {
+//                 "reg_mobileno": personalR?.MOBILE_NUMBER,
+//                 "reg_emailid": personalR?.EMAIL_ID,
+//                 "introbranch": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "typeofcustomer": 1,
+//                 "annualincome": financeR?.INCOME?.toString() || "0",
+//                 "smssubscription": serviceR?.SMS_ALERT ? "Y" : "N",
+//                 "middlename": personalR?.MIDDLE_NAME,
+//                 "firstname": personalR?.FIRST_NAME,
+//                 "lastname": personalR?.LAST_NAME,
+//                 "createdfor": "A",
+//                 "minor": personalR?.IS_MINOR ? "Y" : "N",
+//                 "birthdate": personalR?.DATE_OF_BIRTH ? convertDate(personalR.DATE_OF_BIRTH) : null,
+//                 "gender": personalR?.GENDER,
+//                 "occupationid": Number(personalR?.PROFESSION || 0),
+//                 "title": basicR.CUSTOMER_TYPE_1,
+//                 "idtproofid": Number(personalR?.ID_PROOF || 0),
+//                 "idtproofidno": personalR?.ID_PROOF_NUMBER,
+//                 "proofdetailsid": Number(personalR?.PERMANENT_ADDRESS_PROOF || 0),
+//                 "addproofidno": personalR?.PERMANENT_ADDRESS_PROOF_NUMBER,
+//                 "riskcat": Number(personalR?.RISK_CATEGORY || 0),
+//                 "panno": personalR?.PAN_NO,
+//                 "fatherspouse": personalR?.FATHER_OR_SPOUSE,
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "entrystatus": "F",
+//                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+//                 "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+//                 "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+//                 "religion": Number(personalR?.RELIGION || 0),
+//                 "caste": Number(personalR?.CASTE || 0),
+//                 "fatherlnm": personalR?.F_OR_H_LAST_NAME,
+//                 "fatherfnm": personalR?.F_OR_H_FIRST_NAME,
+//                 "fathermnm": personalR?.F_OR_H_MIDDLE_NAME,
+//                 "motherlname": personalR?.MOTHERS_LAST_NAME,
+//                 "motherfname": personalR?.MOTHERS_NAME,
+//                 "mothermname": personalR?.MOTHERS_MIDDLE_NAME,
+//                 "mothertitle": personalR?.MOTHER_TITLE,
+//                 "issuiddocplace": basicR.DOCUMENTS_ISSUE_PLACE,
+//                 "iddocissuauth": basicR.DOCUMENTS_AUTHORITY,
+//                 "maritalstatus": personalR?.MARITAL_STATUS,
+//                 "caste_code": Number(personalR?.CASTE || 0),
+//                 "guardianid": (personalR?.IS_MINOR && guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? guardianR.APPLICANTS_DATA.CUSTOMER_ID : null
+//             },
+//             "custgurobj": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
+//                 "reg_mobileno": guardianR?.MOBILE_NUMBER,
+//                 "reg_emailid": guardianR?.EMAIL_ID,
+//                 "introbranch": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "typeofcustomer": 1,
+//                 "annualincome": guardianFinanceR?.INCOME?.toString() || "0",
+//                 "smssubscription": serviceR?.SMS_ALERT ? "Y" : "N",
+//                 "middlename": guardianR?.MIDDLE_NAME,
+//                 "firstname": guardianR?.FIRST_NAME,
+//                 "lastname": guardianR?.LAST_NAME,
+//                 "createdfor": "A",
+//                 "minor": guardianR?.IS_MINOR ? "Y" : "N",
+//                 "birthdate": guardianR?.DATE_OF_BIRTH ? convertDate(guardianR.DATE_OF_BIRTH) : null,
+//                 "gender": guardianR?.GENDER,
+//                 "occupationid": Number(guardianR?.PROFESSION || 0),
+//                 "title": basicR.CUSTOMER_TYPE_1,
+//                 "idtproofid": Number(guardianR?.ID_PROOF || 0),
+//                 "idtproofidno": guardianR?.ID_PROOF_NUMBER,
+//                 "proofdetailsid": Number(guardianR?.PERMANENT_ADDRESS_PROOF || 0),
+//                 "addproofidno": guardianR?.PERMANENT_ADDRESS_PROOF_NUMBER,
+//                 "riskcat": Number(guardianR?.RISK_CATEGORY || 0),
+//                 "panno": guardianR?.PAN_NO,
+//                 "fatherspouse": guardianR?.FATHER_OR_SPOUSE,
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "entrystatus": "F",
+//                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+//                 "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+//                 "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+//                 "religion": Number(guardianR?.RELIGION || 0),
+//                 "caste": Number(guardianR?.CASTE || 0),
+//                 "fatherlnm": guardianR?.F_OR_H_LAST_NAME,
+//                 "fatherfnm": guardianR?.F_OR_H_FIRST_NAME,
+//                 "fathermnm": guardianR?.F_OR_H_MIDDLE_NAME,
+//                 "motherlname": guardianR?.MOTHERS_LAST_NAME,
+//                 "motherfname": guardianR?.MOTHERS_NAME,
+//                 "mothermname": guardianR?.MOTHERS_MIDDLE_NAME,
+//                 "mothertitle": guardianR?.MOTHER_TITLE,
+//                 "issuiddocplace": basicR.DOCUMENTS_ISSUE_PLACE,
+//                 "iddocissuauth": basicR.DOCUMENTS_AUTHORITY,
+//                 "maritalstatus": guardianR?.MARITAL_STATUS,
+//                 "caste_code": Number(guardianR?.CASTE || 0)
+//             },
+//             "acopn_hdr_obj": null,
+//             "acopn_tlr_obj": null,
+//             "addobj_P": {
+//                 "addresstype": "P",
+//                 "emailid": personalR?.EMAIL_ID,
+//                 "countryid": 1,
+//                 "stateid": await getStateCode(pool, personalR?.PERMANENT_STATE),
+//                 "districtid": await getDistCode(pool, personalR?.PERMANENT_DISTRICT),
+//                 "talukaid": await getTalukaCode(pool, personalR?.PERMANENT_TALUKA),
+//                 "cityid": await getCityCode(pool, personalR?.PERMANENT_CITY),
+//                 "areaid": await getAreaCode(pool, personalR?.PERMANENT_AREA),
+//                 "mobile": personalR?.MOBILE_NUMBER,
+//                 "pincode": personalR?.PERMANENT_PINCODE,
+//                 "regionid": 1,
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "entrystatus": "F",
+//                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+//                 "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+//                 "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+//                 "addressline1": `${personalR?.PERMANENT_ADDRESS} ${personalR?.PERMANENT_LANDMARK}`
+//             },
+//             "addobj_C": {
+//                 "addresstype": "C",
+//                 "countryid": 1,
+//                 "stateid": await getStateCode(pool, personalR?.CURRENT_STATE),
+//                 "districtid": await getDistCode(pool, personalR?.CURRENT_DISTRICT),
+//                 "talukaid": await getTalukaCode(pool, personalR?.CURRENT_TALUKA),
+//                 "cityid": await getCityCode(pool, personalR?.CURRENT_CITY),
+//                 "areaid": await getAreaCode(pool, personalR?.CURRENT_AREA),
+//                 "regionid": 1,
+//                 "mobile": personalR?.MOBILE_NUMBER,
+//                 "pincode": personalR?.CURRENT_PINCODE,
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+//                 "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+//                 "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+//                 "addressline1": `${personalR?.CURRENT_ADDRESS} ${personalR?.CURRENT_LANDMARK}`
+//             },
+//             "addobj_O": {
+//                 "addresstype": "O",
+//                 "countryid": 1,
+//                 "stateid": await getStateCode(pool, personalR?.OFFICE_STATE),
+//                 "districtid": await getDistCode(pool, personalR?.OFFICE_DISTRICT),
+//                 "talukaid": await getTalukaCode(pool, personalR?.OFFICE_TALUKA),
+//                 "cityid": await getCityCode(pool, personalR?.OFFICE_CITY),
+//                 "areaid": await getAreaCode(pool, personalR?.OFFICE_AREA),
+//                 "regionid": 1,
+//                 "mobile": personalR?.MOBILE_NUMBER,
+//                 "pincode": personalR?.OFFICE_PINCODE,
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+//                 "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+//                 "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+//                 "addressline1": `${personalR?.OFFICE_ADDRESS} ${personalR?.OFFICE_LANDMARK}`
+//             },
+//             "addobjgur_P": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
+//                 "addresstype": "P",
+//                 "emailid": guardianR?.EMAIL_ID,
+//                 "countryid": 1,
+//                 "stateid": await getStateCode(pool, guardianR?.PERMANENT_STATE),
+//                 "districtid": await getDistCode(pool, guardianR?.PERMANENT_DISTRICT),
+//                 "talukaid": await getTalukaCode(pool, guardianR?.PERMANENT_TALUKA),
+//                 "cityid": await getCityCode(pool, guardianR?.PERMANENT_CITY),
+//                 "areaid": await getAreaCode(pool, guardianR?.PERMANENT_AREA),
+//                 "mobile": guardianR?.MOBILE_NUMBER,
+//                 "pincode": guardianR?.PERMANENT_PINCODE,
+//                 "regionid": 1,
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "entrystatus": "F",
+//                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+//                 "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+//                 "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+//                 "addressline1": `${guardianR?.PERMANENT_ADDRESS} ${guardianR?.PERMANENT_LANDMARK}`
+//             },
+//             "addobjgur_C": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
+//                 "addresstype": "C",
+//                 "countryid": 1,
+//                 "stateid": await getStateCode(pool, guardianR?.CURRENT_STATE),
+//                 "districtid": await getDistCode(pool, guardianR?.CURRENT_DISTRICT),
+//                 "talukaid": await getTalukaCode(pool, guardianR?.CURRENT_TALUKA),
+//                 "cityid": await getCityCode(pool, guardianR?.CURRENT_CITY),
+//                 "areaid": await getAreaCode(pool, guardianR?.CURRENT_AREA),
+//                 "regionid": 1,
+//                 "mobile": guardianR?.MOBILE_NUMBER,
+//                 "pincode": guardianR?.CURRENT_PINCODE,
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+//                 "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+//                 "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+//                 "addressline1": `${guardianR?.CURRENT_ADDRESS} ${guardianR?.CURRENT_LANDMARK}`
+//             },
+//             "addobjgur_O": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
+//                 "addresstype": "O",
+//                 "countryid": 1,
+//                 "stateid": await getStateCode(pool, guardianR?.OFFICE_STATE),
+//                 "districtid": await getDistCode(pool, guardianR?.OFFICE_DISTRICT),
+//                 "talukaid": await getTalukaCode(pool, guardianR?.OFFICE_TALUKA),
+//                 "cityid": await getCityCode(pool, guardianR?.OFFICE_CITY),
+//                 "areaid": await getAreaCode(pool, guardianR?.OFFICE_AREA),
+//                 "regionid": 1,
+//                 "mobile": guardianR?.MOBILE_NUMBER,
+//                 "pincode": guardianR?.OFFICE_PINCODE,
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+//                 "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+//                 "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+//                 "addressline1": `${guardianR?.OFFICE_ADDRESS} ${guardianR?.OFFICE_LANDMARK}`
+//             },
+//             "kyccomobj": {
+//                 "kcc_status": "F",
+//                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+//                 "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID)
+//             },
+//             "kyccompdtlrobj": {
+//                 "kcd_addproff": Number(personalR?.PERMANENT_ADDRESS_PROOF || 0),
+//                 "kcd_addidno": personalR?.PERMANENT_ADDRESS_PROOF_NUMBER,
+//                 "kcd_idproof": Number(personalR?.ID_PROOF || 0),
+//                 "kcd_ididno": personalR?.ID_PROOF_NUMBER,
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID)
+//             },
+//             "kyccomgurobj": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
+//                 "kcc_status": "F",
+//                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+//                 "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID)
+//             },
+//             "kyccompdtlrgurobj": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
+//                 "kcd_addproff": Number(guardianR?.PERMANENT_ADDRESS_PROOF || 0),
+//                 "kcd_addidno": guardianR?.PERMANENT_ADDRESS_PROOF_NUMBER,
+//                 "kcd_idproof": Number(guardianR?.ID_PROOF || 0),
+//                 "kcd_ididno": guardianR?.ID_PROOF_NUMBER,
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID)
+//             },
+//             ...await getCurrent(req, basicR, serviceR, depositR),
+//             ...await getJoin(req, basicR, serviceR, depositR),
+
+//             "acmst_obj": {
+//                 "checkbookfacility": serviceR?.CHEQUE_BOOK ? "Y" : "N",
+//                 "schemecode": Number(depositR?.SCHEME_CODE || 0),
+//                 "acctitle": `${personalR?.LAST_NAME} ${personalR?.FIRST_NAME} ${personalR?.MIDDLE_NAME}`,
+//                 "jointacc": "N",
+//                 "constitution": Number(personalR?.CONSTITUTION || 0),
+//                 "operinstructions": Number(depositR?.ACCOUNT_OPERATION || 0),
+//                 "paymentinstructions": Number(depositR?.PAYMENT_INSTRUCTION || 0),
+//                 "entrystatus": "F",
+//                 "smssubscrbd": serviceR?.SMS_ALERT ? "Y" : "N",
+//                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+//                 "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+//                 "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "acctobeopn_atbrncd": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "accopened_atbrn": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "accopendt": '15-10-2025 00:00:00',
+//                 "opnormdf": "A"
+//             },
+//             "accdtl_obj": {
+//                 "schemecode": Number(depositR?.SCHEME_CODE || 0),
+//                 "changeno": 1,
+//                 "bankcode": 1,
+//                 "checkbookfacility": serviceR?.CHEQUE_BOOK ? "Y" : "N",
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "acctobeopn_atbrncd": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "accopened_atbrn": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID)
+//             },
+//             "docdtl_obj": {
+//                 "schemecode": Number(depositR?.SCHEME_CODE || 0),
+//                 "docid": 1,
+//                 "changeno": 1,
+//                 "bankcode": 1,
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "acctobeopn_atbrncd": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "accopened_atbrn": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID)
+//             },
+//             "acnomobj": nomineeR ? {
+//                 "and_nominame": nomineeR.NOMINEE_NAME,
+//                 "and_nominaddrs": nomineeR.NOMINEE_ADDRESS,
+//                 "and_relation": Relation(nomineeR.RELATION),
+//                 "and_dtofbirth": convertDate(nomineeR.DOB),
+//                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+//                 "and_caretaker": `${nomineeR.APONITED_NAME}  ${nomineeR.APONITED_ADDRESS}`
+//             } : null,
+//             "m_kcd_iddocimage": await getDocument('Applicant ID Proof', documentR),
+//             "m_kcd_adddocimage": await getDocument('Applicant Address Proof', documentR),
+//             "m_kcd_photo": await getDocument('Applicant Photo', documentR),
+//             "m_kcd_sign": await getDocument('Signature', documentR),
+
+//             "m_kcd_photo_gur": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : await getDocument('Applicant Photo', guardianDocumentR),
+//             "m_kcd_iddocimage_gur": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : await getDocument('Applicant ID Proof', guardianDocumentR),
+//             "m_kcd_adddocimage_gur": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : await getDocument('Applicant Address Proof', guardianDocumentR),
+//             "m_kcd_sign_gur": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : await getDocument('Signature', guardianDocumentR)
+//         }
+
+//         // 🌐 DYNAMIC CBS URL (Multitenancy)
+//         const host = req.cbsApiHost;
+//         const port = req.cbsApiPort;
+//         const posturl = `${host}:${port}/OnBoardCustomer/customer/onBoardCustomer` // 🔴 Updated endpoint as per Postman
+//         const bearerKey = await getJWTToken(req);
+
+//         if (basicR.IS_OLD_CUSTOMER_1) {
+//             account_opening_data.custobj.customerid = basicR.CUSTOMER_ID_1;
+//         }
+//         if (personalR?.AADHAAR_NUMBER) {
+//             account_opening_data.custobj.custuin = personalR.AADHAAR_NUMBER;
+//         }
+//         if (account_opening_data.custobj_join != null || account_opening_data.custobj_const != null) {
+//             account_opening_data.acmst_obj.jointacc = 'Y'
+//         }
+
+//         const configuration = {
+//             headers: {
+//                 "Authorization": `Bearer ${bearerKey}`,
+//                 "UserName": req.userName || 'cpc',
+//                 "BankName": req.bankName || "Ajara",
+//                 "BranchName": req.cbsBranchName || "Uttur",
+//                 "CallerSystem": req.cbsCallerSystem || "System5"
+//             }
+//         }
+
+//         // 📝 [LOGGING] Verify user and branch data before calling CBS
+//         if (account_opening_data.custobj.entryuser === '-' ||
+//             account_opening_data.custobj.verifiedby === '-' ||
+//             account_opening_data.custobj.authuser === '-') {
+//             console.warn('⚠️ [WARNING] Some teller/user names are missing (sent as "-"). Please check user_master table.');
+//             console.log('➡️ EntryUser:', account_opening_data.custobj.entryuser);
+//             console.log('➡️ VerifiedBy:', account_opening_data.custobj.verifiedby);
+//             console.log('➡️ AuthUser:', account_opening_data.custobj.authuser);
+//         }
+
+//         if (account_opening_data.custobj.brncode === 1) {
+//             console.warn('⚠️ [WARNING] BrnCode is 1 (Fallback). Please check if CREATED_BRANCH_ID is valid in basic_details.');
+//         }
+
+//         const accountCreatedData = await axios.post(posturl, account_opening_data, configuration)
+
+//         let basicUpdateQ = `update basic_details set ACCOUNT_NUMBER = ?, CUSTOMER_ID_1 = ? where ID = ?`;
+//         let basicUpdateParams = [accountCreatedData.data['Account number'], accountCreatedData.data['Customer Code'], applicant_id];
+
+//         if (personalR?.IS_MINOR && depositR?.ACCOUNT_TYPE == 'A') {
+//             const customer_ids = accountCreatedData.data['Customer Code'].split(",");
+//             const primary_applicant = customer_ids[0];
+//             const guardian_applicant = customer_ids[1].split("-")[1];
+//             const APPLICANT_DATA = basicR['APPLICANT_DATA'] || [];
+
+//             if (APPLICANT_DATA[1]) APPLICANT_DATA[1].CUSTOMER_ID = guardian_applicant;
+
+//             basicUpdateQ = `update basic_details set ACCOUNT_NUMBER = ?, CUSTOMER_ID_1 = ?, APPLICANT_DATA = ? where ID = ?`
+//             basicUpdateParams = [accountCreatedData.data['Account number'], primary_applicant, JSON.stringify(APPLICANT_DATA), applicant_id];
+//         }
+
+//         if (account_opening_data.custobj_join != null) {
+//             const customer_ids = accountCreatedData.data['Customer Code'].split(",");
+//             const primary_applicant = customer_ids[0];
+//             const other_ids = customer_ids[1].split("-")[1].split(',');
+//             const APPLICANT_DATA = basicR['APPLICANT_DATA'] || [];
+
+//             for (let i = 0; i < APPLICANT_DATA.length; i++) {
+//                 if (other_ids[i]) APPLICANT_DATA[i].CUSTOMER_ID = other_ids[i];
+//             }
+
+//             basicUpdateQ = `update basic_details set ACCOUNT_NUMBER = ?, CUSTOMER_ID_1 = ?, APPLICANT_DATA = ? where ID = ?`
+//             basicUpdateParams = [accountCreatedData.data['Account number'], primary_applicant, JSON.stringify(APPLICANT_DATA), applicant_id];
+//         }
+
+//         if (account_opening_data.custobj_const != null) {
+//             const customer_ids = accountCreatedData.data['Customer Code'].split(",");
+//             const primary_applicant = customer_ids[0];
+//             const other_ids = customer_ids[1].split("-")[1].split(',');
+//             const APPLICANT_DATA = basicR['APPLICANT_DATA'] || [];
+
+//             for (let i = 0; i < APPLICANT_DATA.length; i++) {
+//                 if (other_ids[i]) APPLICANT_DATA[i].CUSTOMER_ID = other_ids[i];
+//             }
+
+//             basicUpdateQ = `update basic_details set ACCOUNT_NUMBER = ?, CUSTOMER_ID_1 = ?, APPLICANT_DATA = ? where ID = ?`
+//             basicUpdateParams = [accountCreatedData.data['Account number'], primary_applicant, JSON.stringify(APPLICANT_DATA), applicant_id];
+//         }
+
+//         await pool.promise().query(basicUpdateQ, basicUpdateParams);
+
+//         res.send({
+//             "code": 200,
+//             "data": account_opening_data,
+//             "success_data": accountCreatedData.data
+//         })
+
+//     } catch (error) {
+//         console.error('❌ onBoardCustomer error:', error);
+//         res.status(400).send({
+//             "code": 400,
+//             "message": "Failed",
+//             "error": error.message || error
+//         })
+//     }
+
+// }
+
+
+
+
+exports.onBoardCustomer = async (req, res) => {
     try {
         const applicant_id = req.body.APPLICANT_ID;
         const pool = req.db;
@@ -293,7 +820,7 @@ exports.onBoardCustomer = async(req, res) => {
                 "gender": personalR?.GENDER,
                 "occupationid": Number(personalR?.PROFESSION || 0),
                 "title": basicR.CUSTOMER_TYPE_1,
-                "idtproofid": Number(personalR?.ID_PROOF || 0),
+                "idtproofid": Number(await getCbsDocId(req, personalR?.ID_PROOF) || 0),
                 "idtproofidno": personalR?.ID_PROOF_NUMBER,
                 "proofdetailsid": Number(personalR?.PERMANENT_ADDRESS_PROOF || 0),
                 "addproofidno": personalR?.PERMANENT_ADDRESS_PROOF_NUMBER,
@@ -301,71 +828,71 @@ exports.onBoardCustomer = async(req, res) => {
                 "panno": personalR?.PAN_NO,
                 "fatherspouse": personalR?.FATHER_OR_SPOUSE,
                 "bankcode": 1,
-                "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+                "brncode": await getBranchFromCBS(masterPool, basicR.CREATED_BRANCH_ID),
                 "entrystatus": "F",
-                "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
-                "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
-                "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+                "entryuser": await getUserNameByID(masterPool, basicR.MAKER_USER_ID),
+                "verifiedby": await getUserNameByID(masterPool, basicR.CHACKER_USER_ID),
+                "authuser": await getUserNameByID(masterPool, basicR.VERIFIER_USER_ID),
                 "religion": Number(personalR?.RELIGION || 0),
                 "caste": Number(personalR?.CASTE || 0),
                 "fatherlnm": personalR?.F_OR_H_LAST_NAME,
                 "fatherfnm": personalR?.F_OR_H_FIRST_NAME,
                 "fathermnm": personalR?.F_OR_H_MIDDLE_NAME,
-                "motherlname": personalR?.MOTHERS_LAST_NAME,
-                "motherfname": personalR?.MOTHERS_NAME,
-                "mothermname": personalR?.MOTHERS_MIDDLE_NAME,
-                "mothertitle": personalR?.MOTHER_TITLE,
+                "motherlname": personalR?.MOTHER_LAST_NAME || personalR?.MOTHERS_LAST_NAME,
+                "motherfname": personalR?.MOTHER_NAME || personalR?.MOTHERS_NAME,
+                "mothermname": personalR?.MOTHER_MIDDLE_NAME || personalR?.MOTHERS_MIDDLE_NAME,
+                "mothertitle": personalR?.MOTHER_TITLE || personalR?.MOTHER_TITLE,
                 "issuiddocplace": basicR.DOCUMENTS_ISSUE_PLACE,
                 "iddocissuauth": basicR.DOCUMENTS_AUTHORITY,
                 "maritalstatus": personalR?.MARITAL_STATUS,
                 "caste_code": Number(personalR?.CASTE || 0),
-                "guardianid": (personalR?.IS_MINOR && guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? guardianR.APPLICANTS_DATA.CUSTOMER_ID : null
+                // "guardianid": (personalR?.IS_MINOR && guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? guardianR.APPLICANTS_DATA.CUSTOMER_ID : null
             },
-            "custgurobj": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
-                "reg_mobileno": guardianR?.MOBILE_NUMBER,
-                "reg_emailid": guardianR?.EMAIL_ID,
-                "introbranch": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
-                "typeofcustomer": 1,
-                "annualincome": guardianFinanceR?.INCOME?.toString() || "0",
-                "smssubscription": serviceR?.SMS_ALERT ? "Y" : "N",
-                "middlename": guardianR?.MIDDLE_NAME,
-                "firstname": guardianR?.FIRST_NAME,
-                "lastname": guardianR?.LAST_NAME,
-                "createdfor": "A",
-                "minor": guardianR?.IS_MINOR ? "Y" : "N",
-                "birthdate": guardianR?.DATE_OF_BIRTH ? convertDate(guardianR.DATE_OF_BIRTH) : null,
-                "gender": guardianR?.GENDER,
-                "occupationid": Number(guardianR?.PROFESSION || 0),
-                "title": basicR.CUSTOMER_TYPE_1,
-                "idtproofid": Number(guardianR?.ID_PROOF || 0),
-                "idtproofidno": guardianR?.ID_PROOF_NUMBER,
-                "proofdetailsid": Number(guardianR?.PERMANENT_ADDRESS_PROOF || 0),
-                "addproofidno": guardianR?.PERMANENT_ADDRESS_PROOF_NUMBER,
-                "riskcat": Number(guardianR?.RISK_CATEGORY || 0),
-                "panno": guardianR?.PAN_NO,
-                "fatherspouse": guardianR?.FATHER_OR_SPOUSE,
-                "bankcode": 1,
-                "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
-                "entrystatus": "F",
-                "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
-                "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
-                "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
-                "religion": Number(guardianR?.RELIGION || 0),
-                "caste": Number(guardianR?.CASTE || 0),
-                "fatherlnm": guardianR?.F_OR_H_LAST_NAME,
-                "fatherfnm": guardianR?.F_OR_H_FIRST_NAME,
-                "fathermnm": guardianR?.F_OR_H_MIDDLE_NAME,
-                "motherlname": guardianR?.MOTHERS_LAST_NAME,
-                "motherfname": guardianR?.MOTHERS_NAME,
-                "mothermname": guardianR?.MOTHERS_MIDDLE_NAME,
-                "mothertitle": guardianR?.MOTHER_TITLE,
-                "issuiddocplace": basicR.DOCUMENTS_ISSUE_PLACE,
-                "iddocissuauth": basicR.DOCUMENTS_AUTHORITY,
-                "maritalstatus": guardianR?.MARITAL_STATUS,
-                "caste_code": Number(guardianR?.CASTE || 0)
-            },
-            "acopn_hdr_obj": null,
-            "acopn_tlr_obj": null,
+            // "custgurobj": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
+            //     "reg_mobileno": guardianR?.MOBILE_NUMBER,
+            //     "reg_emailid": guardianR?.EMAIL_ID,
+            //     "introbranch": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+            //     "typeofcustomer": 1,
+            //     "annualincome": guardianFinanceR?.INCOME?.toString() || "0",
+            //     "smssubscription": serviceR?.SMS_ALERT ? "Y" : "N",
+            //     "middlename": guardianR?.MIDDLE_NAME,
+            //     "firstname": guardianR?.FIRST_NAME,
+            //     "lastname": guardianR?.LAST_NAME,
+            //     "createdfor": "A",
+            //     "minor": guardianR?.IS_MINOR ? "Y" : "N",
+            //     "birthdate": guardianR?.DATE_OF_BIRTH ? convertDate(guardianR.DATE_OF_BIRTH) : null,
+            //     "gender": guardianR?.GENDER,
+            //     "occupationid": Number(guardianR?.PROFESSION || 0),
+            //     "title": basicR.CUSTOMER_TYPE_1,
+            //     "idtproofid": Number(guardianR?.ID_PROOF || 0),
+            //     "idtproofidno": guardianR?.ID_PROOF_NUMBER,
+            //     "proofdetailsid": Number(guardianR?.PERMANENT_ADDRESS_PROOF || 0),
+            //     "addproofidno": guardianR?.PERMANENT_ADDRESS_PROOF_NUMBER,
+            //     "riskcat": Number(guardianR?.RISK_CATEGORY || 0),
+            //     "panno": guardianR?.PAN_NO,
+            //     "fatherspouse": guardianR?.FATHER_OR_SPOUSE,
+            //     "bankcode": 1,
+            //     "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+            //     "entrystatus": "F",
+            //     "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+            //     "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+            //     "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+            //     "religion": Number(guardianR?.RELIGION || 0),
+            //     "caste": Number(guardianR?.CASTE || 0),
+            //     "fatherlnm": guardianR?.F_OR_H_LAST_NAME,
+            //     "fatherfnm": guardianR?.F_OR_H_FIRST_NAME,
+            //     "fathermnm": guardianR?.F_OR_H_MIDDLE_NAME,
+            //     "motherlname": guardianR?.MOTHERS_LAST_NAME,
+            //     "motherfname": guardianR?.MOTHERS_NAME,
+            //     "mothermname": guardianR?.MOTHERS_MIDDLE_NAME,
+            //     "mothertitle": guardianR?.MOTHER_TITLE,
+            //     "issuiddocplace": basicR.DOCUMENTS_ISSUE_PLACE,
+            //     "iddocissuauth": basicR.DOCUMENTS_AUTHORITY,
+            //     "maritalstatus": guardianR?.MARITAL_STATUS,
+            //     "caste_code": Number(guardianR?.CASTE || 0)
+            // },
+            // "acopn_hdr_obj": null,
+            // "acopn_tlr_obj": null,
             "addobj_P": {
                 "addresstype": "P",
                 "emailid": personalR?.EMAIL_ID,
@@ -404,80 +931,80 @@ exports.onBoardCustomer = async(req, res) => {
                 "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
                 "addressline1": `${personalR?.CURRENT_ADDRESS} ${personalR?.CURRENT_LANDMARK}`
             },
-            "addobj_O": {
-                "addresstype": "O",
-                "countryid": 1,
-                "stateid": await getStateCode(pool, personalR?.OFFICE_STATE),
-                "districtid": await getDistCode(pool, personalR?.OFFICE_DISTRICT),
-                "talukaid": await getTalukaCode(pool, personalR?.OFFICE_TALUKA),
-                "cityid": await getCityCode(pool, personalR?.OFFICE_CITY),
-                "areaid": await getAreaCode(pool, personalR?.OFFICE_AREA),
-                "regionid": 1,
-                "mobile": personalR?.MOBILE_NUMBER,
-                "pincode": personalR?.OFFICE_PINCODE,
-                "bankcode": 1,
-                "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
-                "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
-                "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
-                "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
-                "addressline1": `${personalR?.OFFICE_ADDRESS} ${personalR?.OFFICE_LANDMARK}`
-            },
-            "addobjgur_P": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
-                "addresstype": "P",
-                "emailid": guardianR?.EMAIL_ID,
-                "countryid": 1,
-                "stateid": await getStateCode(pool, guardianR?.PERMANENT_STATE),
-                "districtid": await getDistCode(pool, guardianR?.PERMANENT_DISTRICT),
-                "talukaid": await getTalukaCode(pool, guardianR?.PERMANENT_TALUKA),
-                "cityid": await getCityCode(pool, guardianR?.PERMANENT_CITY),
-                "areaid": await getAreaCode(pool, guardianR?.PERMANENT_AREA),
-                "mobile": guardianR?.MOBILE_NUMBER,
-                "pincode": guardianR?.PERMANENT_PINCODE,
-                "regionid": 1,
-                "bankcode": 1,
-                "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
-                "entrystatus": "F",
-                "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
-                "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
-                "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
-                "addressline1": `${guardianR?.PERMANENT_ADDRESS} ${guardianR?.PERMANENT_LANDMARK}`
-            },
-            "addobjgur_C": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
-                "addresstype": "C",
-                "countryid": 1,
-                "stateid": await getStateCode(pool, guardianR?.CURRENT_STATE),
-                "districtid": await getDistCode(pool, guardianR?.CURRENT_DISTRICT),
-                "talukaid": await getTalukaCode(pool, guardianR?.CURRENT_TALUKA),
-                "cityid": await getCityCode(pool, guardianR?.CURRENT_CITY),
-                "areaid": await getAreaCode(pool, guardianR?.CURRENT_AREA),
-                "regionid": 1,
-                "mobile": guardianR?.MOBILE_NUMBER,
-                "pincode": guardianR?.CURRENT_PINCODE,
-                "bankcode": 1,
-                "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
-                "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
-                "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
-                "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
-                "addressline1": `${guardianR?.CURRENT_ADDRESS} ${guardianR?.CURRENT_LANDMARK}`
-            },
-            "addobjgur_O": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
-                "addresstype": "O",
-                "countryid": 1,
-                "stateid": await getStateCode(pool, guardianR?.OFFICE_STATE),
-                "districtid": await getDistCode(pool, guardianR?.OFFICE_DISTRICT),
-                "talukaid": await getTalukaCode(pool, guardianR?.OFFICE_TALUKA),
-                "cityid": await getCityCode(pool, guardianR?.OFFICE_CITY),
-                "areaid": await getAreaCode(pool, guardianR?.OFFICE_AREA),
-                "regionid": 1,
-                "mobile": guardianR?.MOBILE_NUMBER,
-                "pincode": guardianR?.OFFICE_PINCODE,
-                "bankcode": 1,
-                "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
-                "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
-                "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
-                "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
-                "addressline1": `${guardianR?.OFFICE_ADDRESS} ${guardianR?.OFFICE_LANDMARK}`
-            },
+            // "addobj_O": {
+            //     "addresstype": "O",
+            //     "countryid": 1,
+            //     "stateid": await getStateCode(pool, personalR?.OFFICE_STATE),
+            //     "districtid": await getDistCode(pool, personalR?.OFFICE_DISTRICT),
+            //     "talukaid": await getTalukaCode(pool, personalR?.OFFICE_TALUKA),
+            //     "cityid": await getCityCode(pool, personalR?.OFFICE_CITY),
+            //     "areaid": await getAreaCode(pool, personalR?.OFFICE_AREA),
+            //     "regionid": 1,
+            //     "mobile": personalR?.MOBILE_NUMBER,
+            //     "pincode": personalR?.OFFICE_PINCODE,
+            //     "bankcode": 1,
+            //     "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+            //     "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+            //     "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+            //     "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+            //     "addressline1": `${personalR?.OFFICE_ADDRESS} ${personalR?.OFFICE_LANDMARK}`
+            // },
+            // "addobjgur_P": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
+            //     "addresstype": "P",
+            //     "emailid": guardianR?.EMAIL_ID,
+            //     "countryid": 1,
+            //     "stateid": await getStateCode(pool, guardianR?.PERMANENT_STATE),
+            //     "districtid": await getDistCode(pool, guardianR?.PERMANENT_DISTRICT),
+            //     "talukaid": await getTalukaCode(pool, guardianR?.PERMANENT_TALUKA),
+            //     "cityid": await getCityCode(pool, guardianR?.PERMANENT_CITY),
+            //     "areaid": await getAreaCode(pool, guardianR?.PERMANENT_AREA),
+            //     "mobile": guardianR?.MOBILE_NUMBER,
+            //     "pincode": guardianR?.PERMANENT_PINCODE,
+            //     "regionid": 1,
+            //     "bankcode": 1,
+            //     "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+            //     "entrystatus": "F",
+            //     "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+            //     "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+            //     "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+            //     "addressline1": `${guardianR?.PERMANENT_ADDRESS} ${guardianR?.PERMANENT_LANDMARK}`
+            // },
+            // "addobjgur_C": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
+            //     "addresstype": "C",
+            //     "countryid": 1,
+            //     "stateid": await getStateCode(pool, guardianR?.CURRENT_STATE),
+            //     "districtid": await getDistCode(pool, guardianR?.CURRENT_DISTRICT),
+            //     "talukaid": await getTalukaCode(pool, guardianR?.CURRENT_TALUKA),
+            //     "cityid": await getCityCode(pool, guardianR?.CURRENT_CITY),
+            //     "areaid": await getAreaCode(pool, guardianR?.CURRENT_AREA),
+            //     "regionid": 1,
+            //     "mobile": guardianR?.MOBILE_NUMBER,
+            //     "pincode": guardianR?.CURRENT_PINCODE,
+            //     "bankcode": 1,
+            //     "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+            //     "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+            //     "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+            //     "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+            //     "addressline1": `${guardianR?.CURRENT_ADDRESS} ${guardianR?.CURRENT_LANDMARK}`
+            // },
+            // "addobjgur_O": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
+            //     "addresstype": "O",
+            //     "countryid": 1,
+            //     "stateid": await getStateCode(pool, guardianR?.OFFICE_STATE),
+            //     "districtid": await getDistCode(pool, guardianR?.OFFICE_DISTRICT),
+            //     "talukaid": await getTalukaCode(pool, guardianR?.OFFICE_TALUKA),
+            //     "cityid": await getCityCode(pool, guardianR?.OFFICE_CITY),
+            //     "areaid": await getAreaCode(pool, guardianR?.OFFICE_AREA),
+            //     "regionid": 1,
+            //     "mobile": guardianR?.MOBILE_NUMBER,
+            //     "pincode": guardianR?.OFFICE_PINCODE,
+            //     "bankcode": 1,
+            //     "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
+            //     "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+            //     "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+            //     "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+            //     "addressline1": `${guardianR?.OFFICE_ADDRESS} ${guardianR?.OFFICE_LANDMARK}`
+            // },
             "kyccomobj": {
                 "kcc_status": "F",
                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
@@ -488,28 +1015,28 @@ exports.onBoardCustomer = async(req, res) => {
             "kyccompdtlrobj": {
                 "kcd_addproff": Number(personalR?.PERMANENT_ADDRESS_PROOF || 0),
                 "kcd_addidno": personalR?.PERMANENT_ADDRESS_PROOF_NUMBER,
-                "kcd_idproof": Number(personalR?.ID_PROOF || 0),
+                "kcd_idproof": Number(await getCbsDocId(req, personalR?.ID_PROOF) || 0),
                 "kcd_ididno": personalR?.ID_PROOF_NUMBER,
                 "bankcode": 1,
                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID)
             },
-            "kyccomgurobj": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
-                "kcc_status": "F",
-                "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
-                "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
-                "bankcode": 1,
-                "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID)
-            },
-            "kyccompdtlrgurobj": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
-                "kcd_addproff": Number(guardianR?.PERMANENT_ADDRESS_PROOF || 0),
-                "kcd_addidno": guardianR?.PERMANENT_ADDRESS_PROOF_NUMBER,
-                "kcd_idproof": Number(guardianR?.ID_PROOF || 0),
-                "kcd_ididno": guardianR?.ID_PROOF_NUMBER,
-                "bankcode": 1,
-                "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID)
-            },
-            ...await getCurrent(req, basicR, serviceR, depositR),
-            ...await getJoin(req, basicR, serviceR, depositR),
+            // "kyccomgurobj": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
+            //     "kcc_status": "F",
+            //     "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
+            //     "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
+            //     "bankcode": 1,
+            //     "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID)
+            // },
+            // "kyccompdtlrgurobj": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : {
+            //     "kcd_addproff": Number(guardianR?.PERMANENT_ADDRESS_PROOF || 0),
+            //     "kcd_addidno": guardianR?.PERMANENT_ADDRESS_PROOF_NUMBER,
+            //     "kcd_idproof": Number(guardianR?.ID_PROOF || 0),
+            //     "kcd_ididno": guardianR?.ID_PROOF_NUMBER,
+            //     "bankcode": 1,
+            //     "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID)
+            // },
+            // ...await getCurrent(req, basicR, serviceR, depositR),
+            // ...await getJoin(req, basicR, serviceR, depositR),
 
             "acmst_obj": {
                 "checkbookfacility": serviceR?.CHEQUE_BOOK ? "Y" : "N",
@@ -523,12 +1050,12 @@ exports.onBoardCustomer = async(req, res) => {
                 "smssubscrbd": serviceR?.SMS_ALERT ? "Y" : "N",
                 "entryuser": await getUserNameByID(pool, basicR.MAKER_USER_ID),
                 "verifiedby": await getUserNameByID(pool, basicR.CHACKER_USER_ID),
-                "authuser": await getUserNameByID(pool, basicR.VERIFIER_USER_ID),
+                "authuser": await getUserNameByID(masterPool, basicR.VERIFIER_USER_ID),
                 "bankcode": 1,
-                "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
-                "acctobeopn_atbrncd": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
-                "accopened_atbrn": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
-                "accopendt": '15-10-2025 00:00:00',
+                "brncode": await getBranchFromCBS(masterPool, basicR.CREATED_BRANCH_ID),
+                "acctobeopn_atbrncd": await getBranchFromCBS(masterPool, basicR.CREATED_BRANCH_ID),
+                "accopened_atbrn": await getBranchFromCBS(masterPool, basicR.CREATED_BRANCH_ID),
+                "accopendt": '16-02-2026 00:00:00',
                 "opnormdf": "A"
             },
             "accdtl_obj": {
@@ -542,7 +1069,7 @@ exports.onBoardCustomer = async(req, res) => {
             },
             "docdtl_obj": {
                 "schemecode": Number(depositR?.SCHEME_CODE || 0),
-                "docid": 1,
+                "docid": Number(await getCbsDocId(req, personalR?.ID_PROOF) || 0),
                 "changeno": 1,
                 "bankcode": 1,
                 "brncode": await getBranchFromCBS(pool, basicR.CREATED_BRANCH_ID),
@@ -562,33 +1089,86 @@ exports.onBoardCustomer = async(req, res) => {
             "m_kcd_photo": await getDocument('Applicant Photo', documentR),
             "m_kcd_sign": await getDocument('Signature', documentR),
 
-            "m_kcd_photo_gur": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : await getDocument('Applicant Photo', guardianDocumentR),
-            "m_kcd_iddocimage_gur": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : await getDocument('Applicant ID Proof', guardianDocumentR),
-            "m_kcd_adddocimage_gur": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : await getDocument('Applicant Address Proof', guardianDocumentR),
-            "m_kcd_sign_gur": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : await getDocument('Signature', guardianDocumentR)
+            // "m_kcd_photo_gur": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : await getDocument('Applicant Photo', guardianDocumentR),
+            // "m_kcd_iddocimage_gur": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : await getDocument('Applicant ID Proof', guardianDocumentR),
+            // "m_kcd_adddocimage_gur": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : await getDocument('Applicant Address Proof', guardianDocumentR),
+            // "m_kcd_sign_gur": (!personalR?.IS_MINOR || guardianR?.APPLICANTS_DATA?.IS_OLD_CUSTOMER) ? null : await getDocument('Signature', guardianDocumentR)
         }
 
-        const posturl = `${config[mode].api.host}:${config[mode].api.port}${config[mode].api.routes[3].url}`
+        // 🌐 DYNAMIC CBS URL (Multitenancy)
+        // const host = req.cbsApiHost;
+        // const port = req.cbsApiPort;
+        // const posturl = `${host}:${port}/OnBoardCustomer/customer/onBoardCustomer` // 🔴 Updated endpoint as per Postman
+        // const bearerKey = await getJWTToken(req);
+
+        // if (basicR.IS_OLD_CUSTOMER_1) {
+        //     account_opening_data.custobj.customerid = basicR.CUSTOMER_ID_1;
+        // }
+        // if (personalR?.AADHAAR_NUMBER) {
+        //     account_opening_data.custobj.custuin = personalR.AADHAAR_NUMBER;
+        // }
+        // if (account_opening_data.custobj_join != null || account_opening_data.custobj_const != null) {
+        //     account_opening_data.acmst_obj.jointacc = 'Y'
+        // }
+
+        // const configuration = {
+        //     headers: {
+        //         "Authorization": `Bearer ${bearerKey}`,
+        //         "UserName": req.userName || 'cpc',
+        //         "BankName": req.bankName || "Ajara",
+        //         "BranchName": req.cbsBranchName || "Uttur",
+        //         "CallerSystem": req.cbsCallerSystem || "System5"
+        //     }
+        // }
+
+        // 🌐 DYNAMIC CBS URL (Multitenancy)
+        const host = req.cbsApiHost;
+        const port = req.cbsApiPort;
+        const posturl = `${host}:${port}/OnBoardCustomer/customer/onBoardCustomer`;
+
         const bearerKey = await getJWTToken(req);
 
-        if (basicR.IS_OLD_CUSTOMER_1) {
-            account_opening_data.custobj.customerid = basicR.CUSTOMER_ID_1;
-        }
-        if (personalR?.AADHAAR_NUMBER) {
-            account_opening_data.custobj.custuin = personalR.AADHAAR_NUMBER;
-        }
-        if (account_opening_data.custobj_join != null || account_opening_data.custobj_const != null) {
-            account_opening_data.acmst_obj.jointacc = 'Y'
-        }
-
+        // 📅 2026-04-03 - Dynamic headers (FINAL FIX)
         const configuration = {
-            headers: { "Authorization": `Bearer ${bearerKey}`, "userName": 'cpc', "bankName": "Ajara", "branchName": "Uttur", "callerSystem": "FCO" }
-        }
-        if (config[mode].api.isproxy) {
-            configuration.proxy = proxy;
+            headers: {
+                "Authorization": `Bearer ${bearerKey}`,
+                "UserName": req.userName,
+                "BankName": req.bankName,
+                "BranchName": req.cbsBranchName,
+                "CallerSystem": req.cbsCallerSystem
+            }
+        };
+
+        // DEBUG (remove later)
+        console.log("🚀 FINAL HEADERS:", configuration.headers);
+
+        const accountCreatedData = await axios.post(
+            posturl,
+            account_opening_data,
+            configuration
+        );
+
+
+
+
+
+        if (account_opening_data.custobj.entryuser === '-' ||
+            account_opening_data.custobj.verifiedby === '-' ||
+            account_opening_data.custobj.authuser === '-') {
+            console.warn('⚠️ [WARNING] Some teller/user names are missing (sent as "-"). Please check user_master table.');
+            console.log('➡️ EntryUser:', account_opening_data.custobj.entryuser);
+            console.log('➡️ VerifiedBy:', account_opening_data.custobj.verifiedby);
+            console.log('➡️ AuthUser:', account_opening_data.custobj.authuser);
         }
 
-        const accountCreatedData = await axios.post(posturl, account_opening_data, configuration)
+        if (account_opening_data.custobj.brncode === 1) {
+            console.warn('⚠️ [WARNING] BrnCode is 1 (Fallback). Please check if CREATED_BRANCH_ID is valid in basic_details.');
+        }
+        // if (config[mode].api.isproxy) {
+        //     configuration.proxy = proxy;
+        // }
+
+        // const accountCreatedData = await axios.post(posturl, account_opening_data, configuration)
 
         let basicUpdateQ = `update basic_details set ACCOUNT_NUMBER = ?, CUSTOMER_ID_1 = ? where ID = ?`;
         let basicUpdateParams = [accountCreatedData.data['Account number'], accountCreatedData.data['Customer Code'], applicant_id];
@@ -605,33 +1185,33 @@ exports.onBoardCustomer = async(req, res) => {
             basicUpdateParams = [accountCreatedData.data['Account number'], primary_applicant, JSON.stringify(APPLICANT_DATA), applicant_id];
         }
 
-        if (account_opening_data.custobj_join != null) {
-            const customer_ids = accountCreatedData.data['Customer Code'].split(",");
-            const primary_applicant = customer_ids[0];
-            const other_ids = customer_ids[1].split("-")[1].split(',');
-            const APPLICANT_DATA = basicR['APPLICANT_DATA'] || [];
+        // if (account_opening_data.custobj_join != null) {
+        //     const customer_ids = accountCreatedData.data['Customer Code'].split(",");
+        //     const primary_applicant = customer_ids[0];
+        //     const other_ids = customer_ids[1].split("-")[1].split(',');
+        //     const APPLICANT_DATA = basicR['APPLICANT_DATA'] || [];
 
-            for (let i = 0; i < APPLICANT_DATA.length; i++) {
-                if (other_ids[i]) APPLICANT_DATA[i].CUSTOMER_ID = other_ids[i];
-            }
+        //     for (let i = 0; i < APPLICANT_DATA.length; i++) {
+        //         if (other_ids[i]) APPLICANT_DATA[i].CUSTOMER_ID = other_ids[i];
+        //     }
 
-            basicUpdateQ = `update basic_details set ACCOUNT_NUMBER = ?, CUSTOMER_ID_1 = ?, APPLICANT_DATA = ? where ID = ?`
-            basicUpdateParams = [accountCreatedData.data['Account number'], primary_applicant, JSON.stringify(APPLICANT_DATA), applicant_id];
-        }
+        //     basicUpdateQ = `update basic_details set ACCOUNT_NUMBER = ?, CUSTOMER_ID_1 = ?, APPLICANT_DATA = ? where ID = ?`
+        //     basicUpdateParams = [accountCreatedData.data['Account number'], primary_applicant, JSON.stringify(APPLICANT_DATA), applicant_id];
+        // }
 
-        if (account_opening_data.custobj_const != null) {
-            const customer_ids = accountCreatedData.data['Customer Code'].split(",");
-            const primary_applicant = customer_ids[0];
-            const other_ids = customer_ids[1].split("-")[1].split(',');
-            const APPLICANT_DATA = basicR['APPLICANT_DATA'] || [];
+        // if (account_opening_data.custobj_const != null) {
+        //     const customer_ids = accountCreatedData.data['Customer Code'].split(",");
+        //     const primary_applicant = customer_ids[0];
+        //     const other_ids = customer_ids[1].split("-")[1].split(',');
+        //     const APPLICANT_DATA = basicR['APPLICANT_DATA'] || [];
 
-            for (let i = 0; i < APPLICANT_DATA.length; i++) {
-                if (other_ids[i]) APPLICANT_DATA[i].CUSTOMER_ID = other_ids[i];
-            }
+        //     for (let i = 0; i < APPLICANT_DATA.length; i++) {
+        //         if (other_ids[i]) APPLICANT_DATA[i].CUSTOMER_ID = other_ids[i];
+        //     }
 
-            basicUpdateQ = `update basic_details set ACCOUNT_NUMBER = ?, CUSTOMER_ID_1 = ?, APPLICANT_DATA = ? where ID = ?`
-            basicUpdateParams = [accountCreatedData.data['Account number'], primary_applicant, JSON.stringify(APPLICANT_DATA), applicant_id];
-        }
+        //     basicUpdateQ = `update basic_details set ACCOUNT_NUMBER = ?, CUSTOMER_ID_1 = ?, APPLICANT_DATA = ? where ID = ?`
+        //     basicUpdateParams = [accountCreatedData.data['Account number'], primary_applicant, JSON.stringify(APPLICANT_DATA), applicant_id];
+        // }
 
         await pool.promise().query(basicUpdateQ, basicUpdateParams);
 
@@ -642,15 +1222,25 @@ exports.onBoardCustomer = async(req, res) => {
         })
 
     } catch (error) {
-        console.error('❌ onBoardCustomer error:', error);
+
+        console.log("FULL ERROR => ", error);
+        console.log("ERROR RESPONSE => ", error?.response);
+        console.log("ERROR DATA => ", error?.response?.data);
+        console.log("ERROR MESSAGE => ", error?.message);
+
         res.status(400).send({
-            "code": 400,
-            "message": "Failed",
-            "error": error.message || error
-        })
+            code: 400,
+            message:
+                error?.response?.data ||
+                error?.response?.data?.message ||
+                error?.message ||
+                'Failed'
+        });
     }
 
 }
+
+
 
 async function getJoin(req, basic_details, serviceDetails, depositeDetails) {
     const pool = req.db;
@@ -991,13 +1581,14 @@ async function getDocument(NAME, arr) {
 
 
 function convertDate(date, srcFormate = 'dd/mm/yyyy') {
-    let dateArr = date.split("/");
+    // 🗓️ Handle both '/' and '-' to be safe
+    let dateArr = date.includes("/") ? date.split("/") : date.split("-");
 
-    // let converted_date = new Date(dateArr[2], dateArr[1], dateArr[0], 0, 0, 0)
+    if (dateArr.length < 3) return date; // Return original if not a proper date
 
     let converted_date = `${dateArr[0]}-${dateArr[1]}-${dateArr[2]}`
 
-    console.log("Date :", converted_date);
+    console.log("Converted Date:", converted_date);
 
     return converted_date;
 }
@@ -1079,7 +1670,7 @@ async function getBranchFromCBS(pool, branchID) {
     try {
         if (!branchID) return 1;
         const [rows] = await pool.promise().query('select BRANCH_CODE from branch_master where ID = ?', [branchID]);
-        return (rows.length > 0 && rows[0].BRANCH_CODE) ? Number(rows[0].BRANCH_CODE) : 1;
+        return (rows.length > 0 && rows[0].BRANCH_CODE) ? rows[0].BRANCH_CODE : 1;
     } catch (error) {
         return 1;
     }
@@ -1088,8 +1679,8 @@ async function getBranchFromCBS(pool, branchID) {
 async function getUserNameByID(pool, id) {
     try {
         if (!id) return '-';
-        const [rows] = await pool.promise().query('select CBS_USER_NAME from user_master where ID = ?', [id]);
-        return (rows.length > 0 && rows[0].CBS_USER_NAME) ? rows[0].CBS_USER_NAME : '-';
+        const [rows] = await pool.promise().query('select USER_NAME from user_master where ID = ?', [id]);
+        return (rows.length > 0 && rows[0].USER_NAME) ? rows[0].USER_NAME : '-';
     } catch (error) {
         return '-';
     }
@@ -1154,7 +1745,7 @@ async function getUserNameByID(pool, id) {
 
 // }
 
-exports.getMasters = async(req, res) => {
+exports.getMasters = async (req, res) => {
     try {
 
         // 🔒 CBS DB available आहे का?
@@ -1246,11 +1837,11 @@ function Relation(code) {
 
 }
 
- const proxy = {
-     host: '127.0.0.1', // proxy server
-     port: 8080
- };
-exports.getCustomer = async(req, res) => {
+const proxy = {
+    host: '127.0.0.1', // proxy server
+    port: 8080
+};
+exports.getCustomer = async (req, res) => {
     try {
         let search_mode = req.body.mode;
         let search_key = 'customerCode';
@@ -1267,21 +1858,36 @@ exports.getCustomer = async(req, res) => {
         }
 
 
-        let getCustomer = `${config[mode].api.host}:${config[mode].api.port}${config[mode].api.routes[2].url}${search_key}=${search_value}`
+        // 🌐 DYNAMIC CBS URL (Multitenancy)
+        const host = req.cbsApiHost;
+        const port = req.cbsApiPort;
+        let getCustomer = `${host}:${port}/CustomerInfo/customer/getCustomerInfo?${search_key}=${search_value}`
 
         let bearerKey = await getJWTToken(req);
 
         let configuration = {
-            headers: { "Authorization": `Bearer ${bearerKey}`, "userName": `ajara.ba`, "bankName": "Ajara", "branchName": "Uttur", "callerSystem": "FCO" }
+            headers: {
+                "Authorization": `Bearer ${bearerKey}`,
+                "UserName": req.userName || `ajara.ba`,
+                "BankName": req.bankName || "Ajara",
+                "BranchName": req.cbsBranchName || "Uttur",
+                "CallerSystem": req.cbsCallerSystem || "FCO"
+            }
         }
-        if (config[mode].api.isproxy) {
-            configuration.proxy = proxy;
-        }
+        // if (config[mode].api.isproxy) {
+        //     configuration.proxy = proxy;
+        // }
 
         let customerData = await getRequest(getCustomer, configuration);
 
         console.log("customerData", customerData);
 
+        if (!customerData || !customerData['Customer Details']) {
+            return res.send({
+                "code": 404,
+                "message": "no customer"
+            });
+        }
 
         let res_body = {
             CUSTOMER_ID: customerData['Customer Details'].CUSTOMERID,
@@ -1301,7 +1907,7 @@ exports.getCustomer = async(req, res) => {
             BIRTHDATE: customerData['Customer Details'].BIRTHDATE,
             GENDER: customerData['Customer Details'].GENDER,
 
-            ALREADY_EXIST: customerData['Having individual account']
+            ALREADY_EXIST: customerData['Having individual account'] || customerData['Having individual account:']
 
             // STATE: '',
             // DISTRICT: '',
@@ -1311,141 +1917,24 @@ exports.getCustomer = async(req, res) => {
             // PINCODE: ''
         }
 
-        if (customerData) {
-            res.send({
-                "code": 200,
-                "message": "fetched",
-                "original_data": customerData,
-                "data": res_body
-            })
-        } else {
-            res.send({
+        res.send({
+            "code": 200,
+            "message": "fetched",
+            "original_data": customerData,
+            "data": res_body
+        });
+
+    } catch (error) {
+        console.error("❌ getCustomer error:", error);
+        if (error.response && error.response.status === 404) {
+            return res.send({
                 "code": 404,
                 "message": "no customer"
-            })
+            });
         }
-
-
-        // {
-        //     "Customer Details": {
-        //         "CHANGEDATE": "31-01-2024 00:00:00",
-        //         "CUSTUIN": "111111111111",
-        //         "RISKCAT": "1",
-        //         "ENTRYUSER": "LIST",
-        //         "FIRSTNAME": "P",
-        //         "ENTRYDATE": "31-01-2024 00:00:00",
-        //         "FATHERLNM": "KULKARNI",
-        //         "MIDDLENAME": "A",
-        //         "REC_ID": "634136",
-        //         "REG_MOBILENO": "9764074605",
-        //         "INTROBRANCH": "101",
-        //         "FATHERFNM": "A",
-        //         "LASTNAME": "KULKARNI",
-        //         "IDTPROOFIDNO": "BHAPG1234Q",
-        //         "GOVAUTH_SCRNG": "Y",
-        //         "SHORTNAME": "KULK_PA",
-        //         "PROOFDETAILSID": "1",
-        //         "CUSTCDOLDSTYL": "KPA0000005",
-        //         "TDSAPPLICABLE": "Y",
-        //         "ENTRYSTATUS": "F",
-        //         "MINOR": "N",
-        //         "BIRTHDATE": "16-10-1991 00:00:00",
-        //         "TYPEOFCUSTOMER": "1",
-        //         "FATHERMNM": "G",
-        //         "CREATEDDATE": "31-01-2024 01:24:30",
-        //         "CUSTOMERID": "0000103962",
-        //         "OCCUPATIONID": "1",
-        //         "SCN_NO": "1103396",
-        //         "MARITALSTATUS": "M",
-        //         "BRNCODE": "101",
-        //         "MOTHERFNAME": "A",
-        //         "GENDER": "F",
-        //         "IDTPROOFID": "1",
-        //         "KYCSRNO": "7228",
-        //         "AUTHDATE": "31-01-2024 01:24:30",
-        //         "PEP_CUST": "Y",
-        //         "AUTHUSER": "LIST",
-        //         "TEMPCUSTID": "85295",
-        //         "INTRODUCTIONMODE": "1",
-        //         "ADDPROOFIDNO": "1111",
-        //         "FATHERSPOUSE": "S",
-        //         "INTRODATE": "31-01-2024 00:00:00",
-        //         "CREATEDFOR": "A",
-        //         "MOTHERMNAME": "A",
-        //         "INTROVERIFIEDBY": "LIST",
-        //         "BANKCODE": "1",
-        //         "FREEZCUST": "N",
-        //         "CHANGENO": "1",
-        //         "STAFF": "N",
-        //         "PANNO": "BHAPG1234Q",
-        //         "TITLE": "MRS",
-        //         "MOTHERLNAME": "KULKARNI"
-        //     },
-        //     "Address Details": [
-        //         {
-        //             "ENTRYSTATUS": "F",
-        //             "CHANGEDATE": "31-01-2024 00:00:00",
-        //             "ADDRESSTYPE": "P",
-        //             "CITYSERVEYNO": "11",
-        //             "CITYID": "1",
-        //             "VERIFIEDDATE": "31-01-2024 00:00:00",
-        //             "ENTRYUSER": "LIST",
-        //             "ENTRYDATE": "31-01-2024 00:00:00",
-        //             "DISTRICTID": "1",
-        //             "PINCODE": "416416",
-        //             "FLOORNO": "1",
-        //             "REGIONID": "1",
-        //             "CUSTOMERID": "0000103962",
-        //             "REC_ID": "761639",
-        //             "SCN_NO": "1785820",
-        //             "BRNCODE": "101",
-        //             "SEQUENCENO": "1",
-        //             "AUTHDATE": "31-01-2024 01:24:29",
-        //             "AUTHUSER": "LIST",
-        //             "CREATEDBRANCH": "0",
-        //             "VERIFIEDBY": "LIST",
-        //             "TEMPCUSTID": "85295",
-        //             "COUNTRYID": "1",
-        //             "AREAID": "1",
-        //             "FLATPLOTNO": "1",
-        //             "LANDMARK": "aa",
-        //             "BANKCODE": "1",
-        //             "CHANGENO": "1",
-        //             "ADDRESSLINE1": "aa",
-        //             "STREETNAME": "aa",
-        //             "STATEID": "17",
-        //             "APARTMENTBUILDING": "aa",
-        //             "TALUKAID": "1"
-        //         }
-        //     ],
-        //     "Having individual account:": "Y",
-        //     "KYC Details": {
-        //         "KCC_AUTHDT": "31-01-2024 00:00:00",
-        //         "KCD_IDPROOF": "1",
-        //         "KCC_SRNO": "7228",
-        //         "KCC_BRNSRNO": "6960",
-        //         "KCD_ADDPROFF": "1",
-        //         "KCC_DATE": "31-01-2024 00:00:00",
-        //         "KCC_STATUS": "A",
-        //         "KCC_ENTRYBY": "LIST",
-        //         "KCC_NEXTVALIDATIONDT": "31-01-2034 00:00:00",
-        //         "KCC_ENTRYDT": "31-01-2024 00:00:00",
-        //         "KCC_CONFBY": "LIST",
-        //         "KCD_IDIDNO": "BHAPG1234Q",
-        //         "KCC_CONFDT": "2024-01-31 00:00:00",
-        //         "KCC_CUSTID": "0000103962",
-        //         "KCD_SRNO": "7228",
-        //         "KYC_TYPE": "N",
-        //         "KCC_AUTHBY": "LIST",
-        //         "KCC_ENTINBRANCH": "101",
-        //         "KCD_ADDIDNO": "1111"
-        //     }
-        // }
-    } catch (error) {
-        console.log(error);
         res.send({
             "code": 400,
-            "error": error
+            "error": error.message || error
         })
     }
 

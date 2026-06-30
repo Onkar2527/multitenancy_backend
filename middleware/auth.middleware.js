@@ -1,7 +1,8 @@
 const jwt = require('jsonwebtoken');
 const {
     getBankAppPool,
-    getBankCbsPool
+    getBankCbsPool,
+    getBankConfig
 } = require('../utilities/dbConfig');
 
 module.exports = (req, res, next) => {
@@ -12,7 +13,8 @@ module.exports = (req, res, next) => {
 
     const openApis = [
         '/user/login',
-        '/passwordPolicy'
+        '/passwordPolicy/get', // Allow fetching policy without token (BANK_ID required as query param)
+        '/user/resetPassword'  // Allow resetting password without token during forced reset flow
     ];
 
     // 🔓 Open APIs
@@ -37,6 +39,8 @@ module.exports = (req, res, next) => {
 
         // 👤 USER CONTEXT
         req.user = decoded;
+        req.userName = decoded.USER_NAME;
+        req.branchName = decoded.BRANCH_NAME;
 
         // 🏦 APP DB
         req.appDb = getBankAppPool(decoded.BANK_ID);
@@ -50,6 +54,18 @@ module.exports = (req, res, next) => {
         } catch (e) {
             console.log('⚠️ CBS DB not configured for BANK_ID:', decoded.BANK_ID);
             req.cbsDb = null;
+        }
+
+        // ⚙️ CBS API CONFIG
+        const bankConfig = getBankConfig(decoded.BANK_ID);
+        if (bankConfig) {
+            req.cbsApiHost = bankConfig.cbsApiHost;
+            req.cbsApiPort = bankConfig.cbsApiPort;
+            req.bankName = bankConfig.bankName;
+            // 🔴 Dynamic Fields for Multitenancy
+            req.cbsBranchName = bankConfig.cbsBranchName;
+            req.cbsCallerSystem = bankConfig.cbsCallerSystem;
+            console.log(`🟢 CBS API Config attached: ${req.cbsApiHost}:${req.cbsApiPort} (${req.bankName})`);
         }
 
         return next();

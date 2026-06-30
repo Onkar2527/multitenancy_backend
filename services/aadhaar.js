@@ -1,4 +1,3 @@
-
 const db = require('../utilities/dbModule');
 
 function reqData(req) {
@@ -18,13 +17,16 @@ exports.create = async (req, res) => {
     const pool = req.db;
     let connection;
     try {
-        const addressData = req.body.ADDRESS_ID || {}; // Assuming ADDRESS_ID object contains fields
+        let addressData = req.body.ADDRESS_ID || {};
+        if (Array.isArray(addressData)) {
+            addressData = addressData[0] || {};
+        }
         const aadhaarData = reqData(req);
 
         connection = await pool.promise().getConnection();
         await connection.beginTransaction();
 
-        // 1. Insert/Update Address
+        // 1. Insert Address
         const [addressResult] = await connection.query(`INSERT INTO aadhaar_address SET ?`, [addressData]);
         aadhaarData.ADDRESS_ID = addressResult.insertId;
 
@@ -61,6 +63,8 @@ exports.get = async (req, res) => {
 
         if (results.length > 0) {
             const [addressResults] = await pool.promise().query(`SELECT * FROM aadhaar_address WHERE ID = ?`, [results[0].ADDRESS_ID]);
+            // For frontend compatibility, set ADDRESS_ID to the array of address results
+            results[0].ADDRESS_ID = addressResults;
             results[0].ADDRESS_DETAILS = addressResults.length > 0 ? addressResults[0] : null;
 
             res.send({
@@ -95,14 +99,18 @@ exports.update = async (req, res) => {
         await connection.beginTransaction();
 
         let finalAddressId;
+        let addressData = ADDRESS_ID || {};
 
         // Handle Address update or insert
-        if (ADDRESS_ID && (Array.isArray(ADDRESS_ID) ? ADDRESS_ID[0]?.ID : ADDRESS_ID.ID)) {
-            const addrObj = Array.isArray(ADDRESS_ID) ? ADDRESS_ID[0] : ADDRESS_ID;
+        if (addressData && (Array.isArray(addressData) ? addressData[0]?.ID : addressData.ID)) {
+            const addrObj = Array.isArray(addressData) ? addressData[0] : addressData;
             finalAddressId = addrObj.ID;
-            await connection.query(`UPDATE aadhaar_address SET ? WHERE ID = ?`, [addrObj, finalAddressId]);
-        } else if (ADDRESS_ID) {
-            const [addrInsert] = await connection.query(`INSERT INTO aadhaar_address SET ?`, [ADDRESS_ID]);
+            // Clean ID field from the object to prevent mysql errors during update
+            const { ID: addrId, ...addrFields } = addrObj;
+            await connection.query(`UPDATE aadhaar_address SET ? WHERE ID = ?`, [addrFields, finalAddressId]);
+        } else if (addressData) {
+            const addrObj = Array.isArray(addressData) ? addressData[0] : addressData;
+            const [addrInsert] = await connection.query(`INSERT INTO aadhaar_address SET ?`, [addrObj]);
             finalAddressId = addrInsert.insertId;
         }
 
