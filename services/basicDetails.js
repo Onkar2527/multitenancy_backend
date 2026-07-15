@@ -120,6 +120,8 @@ function getAllApplicantsInfo(applicant, i) {
         PAN_NO: applicant.PAN_NUMBER,
         DRIVING_LICENSE_NO: applicant.LICENSE_NO,
         VOTER_ID: applicant.VOTER_ID,
+        PASSPORT_NO: applicant.PASSPORT_NO,
+        PASSPORT: applicant.PASSPORT_NO,
         DATE_OF_BIRTH: applicant.DOB,
         GENDER: applicant.GENDER,
         MOBILE_NUMBER: applicant.MOBILE
@@ -215,6 +217,10 @@ exports.create = async (req, res) => {
             const applicant = applicants[i];
             const applicantNo = i + 1;
 
+            if (!applicant.IS_OLD_CUSTOMER) {
+                await checkLocalDuplicates(connection, applicant, applicantNo, null);
+            }
+
             const applicantPersonalData = {
                 ...getCommonApplicantInfo(),
                 ...getAllApplicantsInfo(applicant, applicantNo),
@@ -301,6 +307,10 @@ exports.update = async (req, res) => {
             for (let i = 0; i < applicants.length; i++) {
                 const applicant = applicants[i];
                 const applicantNo = i + 1;
+
+                if (!applicant.IS_OLD_CUSTOMER) {
+                    await checkLocalDuplicates(connection, applicant, applicantNo, req.body.ID);
+                }
 
                 const [existing] = await connection.query(
                     `SELECT ID FROM applicants_personal_details 
@@ -418,3 +428,49 @@ exports.getAll = async (req, res) => {
         res.status(500).send({ code: 500, message: 'Failed to get drafts' });
     }
 };
+
+async function checkLocalDuplicates(connection, applicant, applicantNo, currentApplicantId) {
+    const checkFields = [
+        { name: 'Aadhaar', col: 'AADHAAR_NUMBER', val: applicant.AADHAAR_NO },
+        { name: 'PAN', col: 'PAN_NO', val: applicant.PAN_NUMBER },
+        { name: 'Driving License', col: 'DRIVING_LICENSE_NO', val: applicant.LICENSE_NO },
+        { name: 'Voter ID', col: 'VOTER_ID', val: applicant.VOTER_ID },
+        { name: 'Passport', col: 'PASSPORT_NO', val: applicant.PASSPORT_NO },
+        { name: 'Passport', col: 'PASSPORT', val: applicant.PASSPORT_NO }
+    ];
+
+    for (const field of checkFields) {
+        if (field.val && String(field.val).trim() !== '') {
+            let query = `
+                SELECT 
+                    apd.APPLICANT_ID, 
+                    apd.APPLICANT_NO, 
+                    apd.FIRST_NAME, 
+                    apd.MIDDLE_NAME, 
+                    apd.LAST_NAME,
+                    bd.CUSTOMER_ID_1,
+                    bd.CUSTOMER_ID_2,
+                    bd.CUSTOMER_ID_3,
+                    bd.CUSTOMER_ID_4
+                FROM applicants_personal_details apd
+                LEFT JOIN basic_details bd ON apd.APPLICANT_ID = bd.ID
+                WHERE REPLACE(apd.??, ' ', '') = ?`;
+            let params = [field.col, String(field.val).replace(/\s+/g, '').trim()];
+            if (currentApplicantId) {
+                query += ` AND apd.APPLICANT_ID != ?`;
+                params.push(currentApplicantId);
+            }
+            
+            const [rows] = await connection.query(query, params);
+            if (rows.length > 0) {
+                const dupApplicant = rows[0];
+                const fullName = [dupApplicant.FIRST_NAME, dupApplicant.MIDDLE_NAME, dupApplicant.LAST_NAME].filter(Boolean).join(' ');
+                const customerIdKey = `CUSTOMER_ID_${dupApplicant.APPLICANT_NO}`;
+                const customerId = dupApplicant[customerIdKey];
+                const profileName = customerId ? `${fullName}(${customerId})` : fullName;
+
+                throw new Error(`Applicant ${applicantNo} ${field.name} number '${field.val}' already exists in another customer profile of '${profileName}'!`);
+            }
+        }
+    }
+}

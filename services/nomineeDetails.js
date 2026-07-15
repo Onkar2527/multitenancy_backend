@@ -11,7 +11,10 @@ const reqData = (req) => {
         NOMINEE_DOB: req.body.NOMINEE_DOB,
         NOMINEE_AGE: req.body.NOMINEE_AGE,
         APONITED_NAME: req.body.APONITED_NAME,
-        APONITED_ADDRESS: req.body.APONITED_ADDRESS
+        APONITED_ADDRESS: req.body.APONITED_ADDRESS,
+        SHARE_PERCENTAGE: req.body.SHARE_PERCENTAGE,
+        NOMINATION_TYPE: req.body.NOMINATION_TYPE,
+        OTHER_RELATION: req.body.OTHER_RELATION
     };
 };
 

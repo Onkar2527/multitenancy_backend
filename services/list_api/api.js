@@ -1937,5 +1937,89 @@ exports.getCustomer = async (req, res) => {
             "error": error.message || error
         })
     }
-
 }
+
+exports.checkLocalDuplicate = async (req, res) => {
+    try {
+        const pool = req.db;
+        const { value, type, applicantId } = req.body;
+
+        if (!value || !type) {
+            return res.send({ code: 400, message: "value and type are required" });
+        }
+
+        const typeMap = {
+            'AADHAAR_NO': ['AADHAAR_NUMBER'],
+            'PAN': ['PAN_NO'],
+            'DL': ['DRIVING_LICENSE_NO'],
+            'VOTER_ID': ['VOTER_ID'],
+            'PASSPORT': ['PASSPORT_NO', 'PASSPORT']
+        };
+
+        const cols = typeMap[type];
+        if (!cols) {
+            return res.send({ code: 400, message: "Invalid document type" });
+        }
+
+        let sanitizedValue = String(value).replace(/\s+/g, '').trim();
+
+        let query = `
+            SELECT 
+                apd.APPLICANT_ID, 
+                apd.APPLICANT_NO, 
+                apd.FIRST_NAME, 
+                apd.MIDDLE_NAME, 
+                apd.LAST_NAME,
+                bd.CUSTOMER_ID_1,
+                bd.CUSTOMER_ID_2,
+                bd.CUSTOMER_ID_3,
+                bd.CUSTOMER_ID_4
+            FROM applicants_personal_details apd
+            LEFT JOIN basic_details bd ON apd.APPLICANT_ID = bd.ID
+            WHERE `;
+        let queryParts = [];
+        let params = [];
+
+        for (const col of cols) {
+            queryParts.push(`(REPLACE(apd.??, ' ', '') = ? AND apd.?? != '')`);
+            params.push(col, sanitizedValue, col);
+        }
+
+        query += `(${queryParts.join(' OR ')})`;
+
+        if (applicantId && applicantId !== 'undefined' && applicantId !== 'null' && applicantId !== 0) {
+            query += ` AND apd.APPLICANT_ID != ?`;
+            params.push(applicantId);
+        }
+
+        const [rows] = await pool.promise().query(query, params);
+        
+        if (rows.length > 0) {
+            const applicant = rows[0];
+            const fullName = [applicant.FIRST_NAME, applicant.MIDDLE_NAME, applicant.LAST_NAME].filter(Boolean).join(' ');
+            const customerIdKey = `CUSTOMER_ID_${applicant.APPLICANT_NO}`;
+            const customerId = applicant[customerIdKey];
+            const profileName = customerId ? `${fullName}(${customerId})` : fullName;
+
+            return res.send({
+                code: 200,
+                isDuplicate: true,
+                message: `Duplicate document found! This ${type} already exists in another profile of '${profileName}'.`
+            });
+        }
+
+        res.send({
+            code: 200,
+            isDuplicate: false,
+            message: "No duplicates found"
+        });
+
+    } catch (error) {
+        console.error("❌ checkLocalDuplicate error:", error);
+        res.send({
+            code: 500,
+            message: "Internal server error during duplicate check",
+            error: error.message || error
+        });
+    }
+};
