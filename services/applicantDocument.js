@@ -36,11 +36,15 @@ exports.getAllApplicants = async (req, res) => {
         const [rows] = await pool.promise().query(query, params);
 
         const resultsArray = await Promise.all(rows.map(async (doc) => {
-            if (doc.FILE_LINK && fs.existsSync(doc.FILE_LINK)) {
-                try {
-                    doc.IMAGE_DATA = await fs.promises.readFile(doc.FILE_LINK, { encoding: "utf-8" });
-                } catch (e) {
-                    doc.IMAGE_DATA = "";
+            if (doc.FILE_LINK) {
+                const normalizedPath = doc.FILE_LINK.replace(/\\/g, '/');
+                const absolutePath = path.resolve(__dirname, '..', normalizedPath);
+                if (fs.existsSync(absolutePath)) {
+                    try {
+                        doc.IMAGE_DATA = await fs.promises.readFile(absolutePath, { encoding: "utf-8" });
+                    } catch (e) {
+                        doc.IMAGE_DATA = "";
+                    }
                 }
             }
             return doc;

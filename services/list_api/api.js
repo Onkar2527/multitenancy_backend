@@ -42,8 +42,8 @@ async function generateToken(req) {
     const table = `jwt_token`;
 
     // 🌐 DYNAMIC CBS URL (Multitenancy)
-    const host = req.cbsApiHost; // No fallback to static config
-    const port = req.cbsApiPort;
+    const host = process.env.CBS_API_HOST || req.cbsApiHost || 'http://10.35.250.3';
+    const port = process.env.CBS_API_PORT || req.cbsApiPort || 9098;
     const tokenUrl = `${host}:${port}/CustomerInfo/api/auth/getJwt`;
 
     try {
@@ -118,8 +118,8 @@ async function cacheMasters() {
 
 
         // 🌐 DYNAMIC CBS URL (Multitenancy)
-        const host = req.cbsApiHost;
-        const port = req.cbsApiPort;
+        const host = process.env.CBS_API_HOST || req.cbsApiHost || 'http://10.35.250.3';
+        const port = process.env.CBS_API_PORT || req.cbsApiPort || 9098;
         let masterUrl = `${host}:${port}/MasterLOV/customer/getMasterLOV/${table.ID}`
 
         let bearerKey = await getJWTToken(req);
@@ -1122,8 +1122,8 @@ exports.onBoardCustomer = async (req, res) => {
         // }
 
         // 🌐 DYNAMIC CBS URL (Multitenancy)
-        const host = req.cbsApiHost;
-        const port = req.cbsApiPort;
+        const host = process.env.CBS_API_HOST || req.cbsApiHost || 'http://10.35.250.3';
+        const port = process.env.CBS_API_PORT || req.cbsApiPort || 9098;
         const posturl = `${host}:${port}/OnBoardCustomer/customer/onBoardCustomer`;
 
         const bearerKey = await getJWTToken(req);
@@ -1141,6 +1141,18 @@ exports.onBoardCustomer = async (req, res) => {
 
         // DEBUG (remove later)
         console.log("🚀 FINAL HEADERS:", configuration.headers);
+
+        // 📁 Save onboarding payload to JSON file locally in backend
+        try {
+            const path = require('path');
+            const logDir = path.join(__dirname, '..', '..', 'account_json');
+            await fs.mkdir(logDir, { recursive: true });
+            const logFilePath = path.join(logDir, `onboard_${applicant_id}.json`);
+            await fs.writeFile(logFilePath, JSON.stringify(account_opening_data, null, 4), 'utf8');
+            console.log(`🟢 [onBoardCustomer] Logged payload JSON to: ${logFilePath}`);
+        } catch (fileErr) {
+            console.error('❌ [onBoardCustomer] Failed to save payload JSON file:', fileErr);
+        }
 
         const accountCreatedData = await axios.post(
             posturl,
@@ -1859,8 +1871,8 @@ exports.getCustomer = async (req, res) => {
 
 
         // 🌐 DYNAMIC CBS URL (Multitenancy)
-        const host = req.cbsApiHost;
-        const port = req.cbsApiPort;
+        const host = process.env.CBS_API_HOST || req.cbsApiHost || 'http://10.35.250.3';
+        const port = process.env.CBS_API_PORT || req.cbsApiPort || 9098;
         let getCustomer = `${host}:${port}/CustomerInfo/customer/getCustomerInfo?${search_key}=${search_value}`
 
         let bearerKey = await getJWTToken(req);
@@ -1939,6 +1951,45 @@ exports.getCustomer = async (req, res) => {
     }
 }
 
+async function getCustomerIdFromCBS(req, aadhaarNo, panNo) {
+    try {
+        let search_key = '';
+        let search_value = '';
+        if (aadhaarNo && String(aadhaarNo).trim() !== '') {
+            search_key = 'adharNo';
+            search_value = String(aadhaarNo).replace(/\s+/g, '').trim();
+        } else if (panNo && String(panNo).trim() !== '') {
+            search_key = 'panCardNo';
+            search_value = String(panNo).replace(/\s+/g, '').trim();
+        } else {
+            return null;
+        }
+
+        const host = process.env.CBS_API_HOST || req.cbsApiHost || 'http://10.35.250.3';
+        const port = process.env.CBS_API_PORT || req.cbsApiPort || 9098;
+        let getCustomerUrl = `${host}:${port}/CustomerInfo/customer/getCustomerInfo?${search_key}=${search_value}`;
+
+        let bearerKey = await getJWTToken(req);
+        let configuration = {
+            headers: {
+                "Authorization": `Bearer ${bearerKey}`,
+                "UserName": req.userName || `ajara.ba`,
+                "BankName": req.bankName || "Ajara",
+                "BranchName": req.cbsBranchName || "Uttur",
+                "CallerSystem": req.cbsCallerSystem || "System5"
+            }
+        };
+
+        let customerData = await getRequest(getCustomerUrl, configuration);
+        if (customerData && customerData['Customer Details']) {
+            return customerData['Customer Details'].CUSTOMERID;
+        }
+    } catch (e) {
+        console.error('Error fetching customer ID from CBS:', e.message || e);
+    }
+    return null;
+}
+
 exports.checkLocalDuplicate = async (req, res) => {
     try {
         const pool = req.db;
@@ -1970,6 +2021,8 @@ exports.checkLocalDuplicate = async (req, res) => {
                 apd.FIRST_NAME, 
                 apd.MIDDLE_NAME, 
                 apd.LAST_NAME,
+                apd.AADHAAR_NUMBER,
+                apd.PAN_NO,
                 bd.CUSTOMER_ID_1,
                 bd.CUSTOMER_ID_2,
                 bd.CUSTOMER_ID_3,
@@ -1998,7 +2051,13 @@ exports.checkLocalDuplicate = async (req, res) => {
             const applicant = rows[0];
             const fullName = [applicant.FIRST_NAME, applicant.MIDDLE_NAME, applicant.LAST_NAME].filter(Boolean).join(' ');
             const customerIdKey = `CUSTOMER_ID_${applicant.APPLICANT_NO}`;
-            const customerId = applicant[customerIdKey];
+            let customerId = applicant[customerIdKey];
+
+            if (!customerId || String(customerId).trim() === '') {
+                // Fetch Customer ID dynamically from CBS using matching applicant's Aadhaar or PAN
+                customerId = await getCustomerIdFromCBS(req, applicant.AADHAAR_NUMBER, applicant.PAN_NO);
+            }
+
             const profileName = customerId ? `${fullName}(${customerId})` : fullName;
 
             return res.send({

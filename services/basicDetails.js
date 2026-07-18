@@ -219,6 +219,7 @@ exports.create = async (req, res) => {
 
             if (!applicant.IS_OLD_CUSTOMER) {
                 await checkLocalDuplicates(connection, applicant, applicantNo, null);
+                await validatePanVerification(connection, applicant, applicantNo);
             }
 
             const applicantPersonalData = {
@@ -253,7 +254,7 @@ exports.create = async (req, res) => {
     } catch (error) {
         console.error('CREATE ERROR:', error);
         if (connection) await connection.rollback();
-        return res.status(400).send({ code: 400, message: 'Failed to save basic details' });
+        return res.status(400).send({ code: 400, message: error.message || 'Failed to save basic details' });
     } finally {
         if (connection) connection.release();
     }
@@ -310,6 +311,7 @@ exports.update = async (req, res) => {
 
                 if (!applicant.IS_OLD_CUSTOMER) {
                     await checkLocalDuplicates(connection, applicant, applicantNo, req.body.ID);
+                    await validatePanVerification(connection, applicant, applicantNo);
                 }
 
                 const [existing] = await connection.query(
@@ -352,7 +354,7 @@ exports.update = async (req, res) => {
     } catch (error) {
         console.error('UPDATE ERROR:', error);
         if (connection) await connection.rollback();
-        res.status(400).send({ code: 400, message: 'Failed to update personal information' });
+        res.status(400).send({ code: 400, message: error.message || 'Failed to update personal information' });
     } finally {
         if (connection) connection.release();
     }
@@ -379,34 +381,38 @@ exports.getAll = async (req, res) => {
         let filterValues = [];
 
         if (user.ROLE_ID == 1) {
-            roleFilter = ` AND MAKER_USER_ID = ? AND CREATED_BRANCH_ID = ?`;
+            roleFilter = ` AND bd.MAKER_USER_ID = ? AND bd.CREATED_BRANCH_ID = ?`;
             filterValues.push(user.USER_ID, user.BRANCH_ID);
         } else if (user.ROLE_ID == 2) {
-            roleFilter = ` AND CHACKER_USER_ID = ? AND CREATED_BRANCH_ID = ?`;
+            roleFilter = ` AND bd.CHACKER_USER_ID = ? AND bd.CREATED_BRANCH_ID = ?`;
             filterValues.push(user.USER_ID, user.BRANCH_ID);
         } else if (user.ROLE_ID == 3) {
-            roleFilter = ` AND (VERIFIER_USER_ID = ? OR (ISNULL(VERIFIER_USER_ID) AND TRACK_ID = 3))`;
+            roleFilter = ` AND (bd.VERIFIER_USER_ID = ? OR (ISNULL(bd.VERIFIER_USER_ID) AND bd.TRACK_ID = 3))`;
             filterValues.push(user.USER_ID);
         }
 
         let userFilterStr = '';
         if (filter.TRACK_ID) {
-            userFilterStr += ` AND TRACK_ID = ?`;
+            userFilterStr += ` AND bd.TRACK_ID = ?`;
             filterValues.push(filter.TRACK_ID);
         }
         if (filter.START_DATE) {
-            userFilterStr += ` AND CAST(APPLICATION_DATE AS DATE) >= ?`;
+            userFilterStr += ` AND CAST(bd.APPLICATION_DATE AS DATE) >= ?`;
             filterValues.push(filter.START_DATE);
         }
         if (filter.END_DATE) {
-            userFilterStr += ` AND CAST(APPLICATION_DATE AS DATE) <= ?`;
+            userFilterStr += ` AND CAST(bd.APPLICATION_DATE AS DATE) <= ?`;
             filterValues.push(filter.END_DATE);
         }
 
-        const countQuery = `SELECT COUNT(*) cnt FROM basic_details WHERE 1 ${roleFilter} ${userFilterStr}`;
+        const countQuery = `SELECT COUNT(*) cnt FROM basic_details bd WHERE 1 ${roleFilter} ${userFilterStr}`;
         const [countResult] = await db.promise().query(countQuery, filterValues);
 
-        let dataQuery = `SELECT * FROM basic_details WHERE 1 ${roleFilter} ${userFilterStr} ORDER BY ?? ${sortValue === 'ASC' ? 'ASC' : 'DESC'}`;
+        let dataQuery = `SELECT bd.*, apd.MOBILE_NUMBER AS MOBILE_NO, apd.EMAIL_ID 
+                         FROM basic_details bd 
+                         LEFT JOIN applicants_personal_details apd ON bd.ID = apd.APPLICANT_ID AND apd.APPLICANT_NO = 1 
+                         WHERE 1 ${roleFilter} ${userFilterStr} 
+                         ORDER BY bd.?? ${sortValue === 'ASC' ? 'ASC' : 'DESC'}`;
         let dataValues = [...filterValues, sortKey];
 
         if (pageIndex && pageSize) {
@@ -431,8 +437,6 @@ exports.getAll = async (req, res) => {
 
 async function checkLocalDuplicates(connection, applicant, applicantNo, currentApplicantId) {
     const checkFields = [
-        { name: 'Aadhaar', col: 'AADHAAR_NUMBER', val: applicant.AADHAAR_NO },
-        { name: 'PAN', col: 'PAN_NO', val: applicant.PAN_NUMBER },
         { name: 'Driving License', col: 'DRIVING_LICENSE_NO', val: applicant.LICENSE_NO },
         { name: 'Voter ID', col: 'VOTER_ID', val: applicant.VOTER_ID },
         { name: 'Passport', col: 'PASSPORT_NO', val: applicant.PASSPORT_NO },
@@ -474,3 +478,22 @@ async function checkLocalDuplicates(connection, applicant, applicantNo, currentA
         }
     }
 }
+
+async function validatePanVerification(connection, applicant, applicantNo) {
+    const pan = applicant.PAN_NUMBER;
+    if (!pan || String(pan).trim() === '') {
+        throw new Error(`Applicant ${applicantNo} PAN Number is mandatory.`);
+    }
+
+    const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+    if (!panRegex.test(String(pan).toUpperCase())) {
+        throw new Error(`Applicant ${applicantNo} PAN number '${pan}' format is invalid (should be like ABCDE1234F).`);
+    }
+
+    const q = `SELECT * FROM pan_verified_list WHERE PAN_NUMBER = ? AND IS_VERIFIED = 1`;
+    const [results] = await connection.query(q, [String(pan).toUpperCase()]);
+    if (results.length === 0) {
+        throw new Error(`Applicant ${applicantNo} PAN number '${pan}' must be verified before submitting.`);
+    }
+}
+

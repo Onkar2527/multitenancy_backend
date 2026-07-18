@@ -1,19 +1,23 @@
-const mysql = require('mysql2');
-require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 
-const connection = mysql.createConnection({
-  host: process.env.MASTER_DB_HOST,
-  user: process.env.MASTER_DB_USER,
-  password: process.env.MASTER_DB_PASSWORD,
-  database: process.env.MASTER_DB_NAME,
-  port: process.env.MASTER_DB_PORT
-});
+const signaturePath = 'uploads/applicantDocuments/yVkls7FoasdznEWiqIGSZ3VWSOEOKgyh.jpg';
+const photoPath = 'uploads/applicantDocuments/zlYU9lLTTBPfpfUoBGkTBCD2xb9X7n87.jpg';
 
-connection.query('SELECT ID, BANK_NAME, BANK_LOGO FROM bank_master', (err, results) => {
-  if (err) {
-    console.error('Error:', err);
+function checkFile(filePath) {
+  console.log(`Checking file: ${filePath}`);
+  const resolved = path.resolve(filePath);
+  console.log(`Resolved path: ${resolved}`);
+  if (fs.existsSync(filePath)) {
+    console.log('Exists: YES');
+    const content = fs.readFileSync(filePath, { encoding: 'utf8' });
+    console.log('Content preview (first 100 chars):');
+    console.log(content.substring(0, 100));
   } else {
-    console.log('Results:', JSON.stringify(results, null, 2));
+    console.log('Exists: NO');
   }
-  connection.end();
-});
+}
+
+checkFile(signaturePath);
+console.log('-------------------');
+checkFile(photoPath);
