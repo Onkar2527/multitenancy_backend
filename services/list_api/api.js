@@ -325,10 +325,7 @@ exports.onBoardCustomer = async (req, res) => {
         const [guardianDocumentR] = await pool.promise().query(guardianDocumentQ, [documentT, applicant_id]);
 
         if (!basicR) {
-            return res.status(404).send({
-                code: 404,
-                message: 'Applicant not found'
-            });
+            throw new Error('Applicant not found');
         }
 
         if (guardianR) {
@@ -528,10 +525,6 @@ exports.onBoardCustomer = async (req, res) => {
             account_opening_data,
             configuration
         );
-
-
-
-
 
         if (account_opening_data.custobj.entryuser === '-' ||
             account_opening_data.custobj.verifiedby === '-' ||
