@@ -464,7 +464,7 @@ async function checkLocalDuplicates(connection, applicant, applicantNo, currentA
                 query += ` AND apd.APPLICANT_ID != ?`;
                 params.push(currentApplicantId);
             }
-            
+
             const [rows] = await connection.query(query, params);
             if (rows.length > 0) {
                 const dupApplicant = rows[0];
@@ -490,10 +490,5 @@ async function validatePanVerification(connection, applicant, applicantNo) {
         throw new Error(`Applicant ${applicantNo} PAN number '${pan}' format is invalid (should be like ABCDE1234F).`);
     }
 
-    const q = `SELECT * FROM pan_verified_list WHERE PAN_NUMBER = ? AND IS_VERIFIED = 1`;
-    const [results] = await connection.query(q, [String(pan).toUpperCase()]);
-    if (results.length === 0) {
-        throw new Error(`Applicant ${applicantNo} PAN number '${pan}' must be verified before submitting.`);
-    }
 }
 
