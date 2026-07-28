@@ -1207,7 +1207,8 @@ exports.getCustomer = async (req, res) => {
             BIRTHDATE: customerData['Customer Details'].BIRTHDATE,
             GENDER: customerData['Customer Details'].GENDER,
 
-            ALREADY_EXIST: customerData['Having individual account'] || customerData['Having individual account:']
+            ALREADY_EXIST: customerData['Having individual account'] || customerData['Having individual account:'],
+            KYC_DETAILS: customerData['KYC Details'] || null
 
             // STATE: '',
             // DISTRICT: '',
