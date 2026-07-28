@@ -8,8 +8,7 @@ router
     .post('/create', asyncHandler(basicDetailsService.create))
     .post('/update', asyncHandler(basicDetailsService.update))
     .post('/getAll', asyncHandler(basicDetailsService.getAll))
-
-
+    .post('/getPreviousDetails', asyncHandler(basicDetailsService.getPreviousDetails))
 
 
 module.exports = router

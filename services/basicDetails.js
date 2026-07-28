@@ -124,7 +124,40 @@ function getAllApplicantsInfo(applicant, i) {
         PASSPORT: applicant.PASSPORT_NO,
         DATE_OF_BIRTH: applicant.DOB,
         GENDER: applicant.GENDER,
-        MOBILE_NUMBER: applicant.MOBILE
+        MOBILE_NUMBER: applicant.MOBILE,
+
+        F_OR_H_FIRST_NAME: applicant.F_OR_H_FIRST_NAME,
+        F_OR_H_MIDDLE_NAME: applicant.F_OR_H_MIDDLE_NAME,
+        F_OR_H_LAST_NAME: applicant.F_OR_H_LAST_NAME,
+        MOTHERS_NAME: applicant.MOTHERS_NAME,
+        MOTHERS_MIDDLE_NAME: applicant.MOTHERS_MIDDLE_NAME,
+        MOTHERS_LAST_NAME: applicant.MOTHERS_LAST_NAME,
+        RISK_CATEGORY: applicant.RISK_CATEGORY,
+        RELIGION: applicant.RELIGION,
+        CASTE: applicant.CASTE,
+        MARITAL_STATUS: applicant.MARITAL_STATUS,
+        FATHER_TITLE: applicant.FATHER_TITLE,
+        MOTHER_TITLE: applicant.MOTHER_TITLE,
+        CURRENT_ADDRESS: applicant.CURRENT_ADDRESS,
+        CURRENT_PINCODE: applicant.CURRENT_PINCODE,
+        PERMANENT_ADDRESS: applicant.PERMANENT_ADDRESS,
+        PERMANENT_PINCODE: applicant.PERMANENT_PINCODE,
+        CURRENT_CITY: applicant.CURRENT_CITY,
+        CURRENT_TALUKA: applicant.CURRENT_TALUKA,
+        CURRENT_DISTRICT: applicant.CURRENT_DISTRICT,
+        CURRENT_STATE: applicant.CURRENT_STATE,
+        PERMANENT_CITY: applicant.PERMANENT_CITY,
+        PERMANENT_TALUKA: applicant.PERMANENT_TALUKA,
+        PERMANENT_DISTRICT: applicant.PERMANENT_DISTRICT,
+        PERMANENT_STATE: applicant.PERMANENT_STATE,
+        WORK: applicant.WORK,
+        PROFESSION: applicant.PROFESSION,
+        FATHER_OR_SPOUSE: applicant.FATHER_OR_SPOUSE,
+
+        ID_PROOF: applicant.ID_PROOF,
+        ID_PROOF_NUMBER: applicant.ID_PROOF_NUMBER,
+        PERMANENT_ADDRESS_PROOF: applicant.PERMANENT_ADDRESS_PROOF,
+        PERMANENT_ADDRESS_PROOF_NUMBER: applicant.PERMANENT_ADDRESS_PROOF_NUMBER
     };
 }
 
@@ -165,9 +198,9 @@ exports.get = async (req, res) => {
         const q = `SELECT * FROM basic_details WHERE ID = ?`;
         const [results] = await dbPool.promise().query(q, [ID]);
 
-        if (results.length > 0 && results[0].APPLICANTS_DATA) {
+        if (results.length > 0 && results[0].APPLICANT_DATA) {
             try {
-                results[0].applicants = JSON.parse(results[0].APPLICANTS_DATA);
+                results[0].applicants = JSON.parse(results[0].APPLICANT_DATA);
             } catch (e) {
                 results[0].applicants = [];
             }
@@ -187,7 +220,7 @@ exports.create = async (req, res) => {
         const data = reqData(req);
         const applicants = req.body.applicants || [];
 
-        data.APPLICANTS_DATA = JSON.stringify(applicants);
+        data.APPLICANT_DATA = JSON.stringify(applicants);
         data.MODIFIED_DATE = new Date();
 
         const user = req.user;
@@ -242,6 +275,17 @@ exports.create = async (req, res) => {
                 `INSERT INTO applicant_documents (DOCUMENT_NAME, APPLICANT_ID, APPLICANT_NO)
                  SELECT DOCUMENT_NAME, ?, ? FROM document_master ORDER BY SEQ_NO`, [proposalId, applicantNo]
             );
+
+            if (applicant.ANNUAL_INCOME) {
+                await connection.query(
+                    `INSERT INTO financial_information (APPLICANT_ID, APPLICANT_NO, INCOME) VALUES (?, ?, ?)`,
+                    [proposalId, applicantNo, applicant.ANNUAL_INCOME]
+                );
+            }
+
+            if (applicant.CUSTOMER_ID) {
+                await copyExistingDetails(connection, proposalId, applicantNo, applicant.CUSTOMER_ID, applicant.AADHAAR_NO, applicant.PAN_NUMBER);
+            }
         }
 
         await connection.commit();
@@ -275,7 +319,7 @@ exports.update = async (req, res) => {
 
         if (ROLE_ID == 1) { // MAKER
             data = reqData(req);
-            data.APPLICANTS_DATA = JSON.stringify(applicants);
+            data.APPLICANT_DATA = JSON.stringify(applicants);
             if (data.TRACK_ID == 2) {
                 data.MODIFIED_DATE = new Date();
             }
@@ -345,6 +389,28 @@ exports.update = async (req, res) => {
                         `INSERT INTO applicant_documents (DOCUMENT_NAME, APPLICANT_ID, APPLICANT_NO)
                          SELECT DOCUMENT_NAME, ?, ? FROM document_master ORDER BY SEQ_NO`, [req.body.ID, applicantNo]
                     );
+                }
+
+                if (applicant.ANNUAL_INCOME) {
+                    const [existingFin] = await connection.query(
+                        `SELECT ID FROM financial_information WHERE APPLICANT_ID = ? AND APPLICANT_NO = ?`,
+                        [req.body.ID, applicantNo]
+                    );
+                    if (existingFin.length > 0) {
+                        await connection.query(
+                            `UPDATE financial_information SET INCOME = ? WHERE ID = ?`,
+                            [applicant.ANNUAL_INCOME, existingFin[0].ID]
+                        );
+                    } else {
+                        await connection.query(
+                            `INSERT INTO financial_information (APPLICANT_ID, APPLICANT_NO, INCOME) VALUES (?, ?, ?)`,
+                            [req.body.ID, applicantNo, applicant.ANNUAL_INCOME]
+                        );
+                    }
+                }
+
+                if (applicant.CUSTOMER_ID) {
+                    await copyExistingDetails(connection, req.body.ID, applicantNo, applicant.CUSTOMER_ID, applicant.AADHAAR_NO, applicant.PAN_NUMBER);
                 }
             }
         }
@@ -491,4 +557,227 @@ async function validatePanVerification(connection, applicant, applicantNo) {
     }
 
 }
+
+async function copyExistingDetails(connection, proposalId, applicantNo, customerId, aadhaar, pan) {
+    try {
+        if (!customerId) return;
+
+        // Find the most recent proposal for this Customer ID in basic_details
+        const [prevProposals] = await connection.query(
+            `SELECT ID FROM basic_details 
+             WHERE (CUSTOMER_ID_1 = ? OR CUSTOMER_ID_2 = ? OR CUSTOMER_ID_3 = ? OR CUSTOMER_ID_4 = ?) 
+             AND ID != ? ORDER BY ID DESC LIMIT 1`,
+            [customerId, customerId, customerId, customerId, proposalId]
+        );
+
+        if (prevProposals.length > 0) {
+            const prevId = prevProposals[0].ID;
+            
+            // Find the applicant number in previous proposal by matching Aadhaar or PAN
+            const [prevApps] = await connection.query(
+                `SELECT APPLICANT_NO FROM applicants_personal_details 
+                 WHERE APPLICANT_ID = ? AND (AADHAAR_NUMBER = ? OR PAN_NO = ?)`,
+                [prevId, aadhaar, pan]
+            );
+            
+            const prevNo = prevApps.length > 0 ? prevApps[0].APPLICANT_NO : 1;
+
+            // 1. Copy Nominee Details
+            const [prevNominees] = await connection.query(
+                `SELECT * FROM nominee_details WHERE APPLICANT_ID = ?`,
+                [prevId]
+            );
+            for (const nominee of prevNominees) {
+                const { ID, APPLICANT_ID, ...nomineeData } = nominee;
+                nomineeData.APPLICANT_ID = proposalId;
+
+                // Check if nominee already exists for this proposal
+                const [existingNom] = await connection.query(
+                    `SELECT ID FROM nominee_details WHERE APPLICANT_ID = ? AND NOMINEE_NAME = ?`,
+                    [proposalId, nomineeData.NOMINEE_NAME]
+                );
+                if (existingNom.length === 0) {
+                    await connection.query(`INSERT INTO nominee_details SET ?`, nomineeData);
+                }
+            }
+
+            // 2. Copy Deposit Details
+            const [prevDeposits] = await connection.query(
+                `SELECT * FROM term_deposite WHERE APPLICANT_ID = ?`,
+                [prevId]
+            );
+            for (const deposit of prevDeposits) {
+                const { ID, APPLICANT_ID, ...depositData } = deposit;
+                depositData.APPLICANT_ID = proposalId;
+
+                const [existingDep] = await connection.query(
+                    `SELECT ID FROM term_deposite WHERE APPLICANT_ID = ?`,
+                    [proposalId]
+                );
+                if (existingDep.length === 0) {
+                    await connection.query(`INSERT INTO term_deposite SET ?`, depositData);
+                }
+            }
+
+            // 2b. Copy Service/Facilities Details
+            const [prevServices] = await connection.query(
+                `SELECT * FROM facilities WHERE APPLICANT_ID = ?`,
+                [prevId]
+            );
+            for (const service of prevServices) {
+                const { ID, APPLICANT_ID, ...serviceData } = service;
+                serviceData.APPLICANT_ID = proposalId;
+
+                const [existingService] = await connection.query(
+                    `SELECT ID FROM facilities WHERE APPLICANT_ID = ?`,
+                    [proposalId]
+                );
+                if (existingService.length === 0) {
+                    await connection.query(`INSERT INTO facilities SET ?`, serviceData);
+                }
+            }
+
+            // 2c. Copy Property Details
+            const [prevProperties] = await connection.query(
+                `SELECT * FROM property_information WHERE APPLICANT_ID = ? AND APPLICANT_NO = ?`,
+                [prevId, prevNo]
+            );
+            for (const prop of prevProperties) {
+                const { ID, APPLICANT_ID, ...propData } = prop;
+                propData.APPLICANT_ID = proposalId;
+                propData.APPLICANT_NO = applicantNo;
+
+                const [existingProp] = await connection.query(
+                    `SELECT ID FROM property_information WHERE APPLICANT_ID = ? AND APPLICANT_NO = ?`,
+                    [proposalId, applicantNo]
+                );
+                if (existingProp.length === 0) {
+                    await connection.query(`INSERT INTO property_information SET ?`, propData);
+                }
+            }
+
+            // 2d. Copy Financial Details
+            const [prevFinancials] = await connection.query(
+                `SELECT * FROM financial_information WHERE APPLICANT_ID = ? AND APPLICANT_NO = ?`,
+                [prevId, prevNo]
+            );
+            for (const fin of prevFinancials) {
+                const { ID, APPLICANT_ID, ...finData } = fin;
+                finData.APPLICANT_ID = proposalId;
+                finData.APPLICANT_NO = applicantNo;
+
+                const [existingFin] = await connection.query(
+                    `SELECT ID FROM financial_information WHERE APPLICANT_ID = ? AND APPLICANT_NO = ?`,
+                    [proposalId, applicantNo]
+                );
+                if (existingFin.length === 0) {
+                    await connection.query(`INSERT INTO financial_information SET ?`, finData);
+                } else {
+                    await connection.query(`UPDATE financial_information SET ? WHERE ID = ?`, [finData, existingFin[0].ID]);
+                }
+            }
+
+            // 3. Copy Document Details (images/attachments)
+            const [prevDocuments] = await connection.query(
+                `SELECT * FROM applicant_documents WHERE APPLICANT_ID = ? AND APPLICANT_NO = ?`,
+                [prevId, prevNo]
+            );
+            for (const doc of prevDocuments) {
+                if (doc.DOCUMENT_FILE) {
+                    await connection.query(
+                        `UPDATE applicant_documents 
+                         SET DOCUMENT_FILE = ?, DOCUMENT_NO = ?, FILE_TYPE = ?, FILE_SIZE = ?, IS_VERIFIED = 1 
+                         WHERE APPLICANT_ID = ? AND APPLICANT_NO = ? AND DOCUMENT_NAME = ?`,
+                        [doc.DOCUMENT_FILE, doc.DOCUMENT_NO, doc.FILE_TYPE, doc.FILE_SIZE, proposalId, applicantNo, doc.DOCUMENT_NAME]
+                    );
+                }
+            }
+
+            // Copy photo if exists
+            const [prevPhotos] = await connection.query(
+                `SELECT PHOTO FROM applicant_photos WHERE APPLICANT_ID = ? AND APPLICANT_NO = ?`,
+                [prevId, prevNo]
+            );
+            if (prevPhotos.length > 0 && prevPhotos[0].PHOTO) {
+                await connection.query(
+                    `UPDATE applicant_photos SET PHOTO = ? 
+                     WHERE APPLICANT_ID = ? AND APPLICANT_NO = ?`,
+                    [prevPhotos[0].PHOTO, proposalId, applicantNo]
+                );
+            }
+            console.log(`Successfully copied nominee, deposit, and documents from proposal ID ${prevId} (Applicant No ${prevNo}) to proposal ID ${proposalId} (Applicant No ${applicantNo})`);
+        }
+    } catch (err) {
+        console.error("Error copying existing details:", err);
+    }
+}
+
+exports.getPreviousDetails = async (req, res) => {
+    try {
+        const db = req.db;
+        const { CUSTOMER_ID } = req.body;
+        if (!CUSTOMER_ID) {
+            return res.status(400).send({ code: 400, message: 'CUSTOMER_ID is required' });
+        }
+
+        // Find the most recent proposal for this Customer ID in basic_details
+        const [prevProposals] = await db.promise().query(
+            `SELECT ID FROM basic_details 
+             WHERE (CUSTOMER_ID_1 = ? OR CUSTOMER_ID_2 = ? OR CUSTOMER_ID_3 = ? OR CUSTOMER_ID_4 = ?) 
+             ORDER BY ID DESC LIMIT 1`,
+            [CUSTOMER_ID, CUSTOMER_ID, CUSTOMER_ID, CUSTOMER_ID]
+        );
+
+        if (prevProposals.length > 0) {
+            const prevId = prevProposals[0].ID;
+
+            // 1. Fetch Nominee Details
+            const [nominees] = await db.promise().query(
+                `SELECT * FROM nominee_details WHERE APPLICANT_ID = ?`,
+                [prevId]
+            );
+
+            // 2. Fetch Deposit Details
+            const [deposits] = await db.promise().query(
+                `SELECT * FROM term_deposite WHERE APPLICANT_ID = ?`,
+                [prevId]
+            );
+
+            // 3. Fetch Service/Facilities Details
+            const [services] = await db.promise().query(
+                `SELECT * FROM facilities WHERE APPLICANT_ID = ?`,
+                [prevId]
+            );
+
+            // 4. Fetch Property Details
+            const [properties] = await db.promise().query(
+                `SELECT * FROM property_information WHERE APPLICANT_ID = ?`,
+                [prevId]
+            );
+
+            // 5. Fetch Financial Details
+            const [financials] = await db.promise().query(
+                `SELECT * FROM financial_information WHERE APPLICANT_ID = ?`,
+                [prevId]
+            );
+
+            return res.send({
+                code: 200,
+                message: 'OK',
+                data: {
+                    nominees: nominees,
+                    deposits: deposits,
+                    services: services,
+                    properties: properties,
+                    financials: financials
+                }
+            });
+        }
+
+        return res.send({ code: 404, message: 'No previous details found' });
+    } catch (error) {
+        console.error('getPreviousDetails error:', error);
+        res.status(500).send({ code: 500, message: 'Internal server error' });
+    }
+};
 

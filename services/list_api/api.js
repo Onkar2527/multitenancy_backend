@@ -1189,33 +1189,59 @@ exports.getCustomer = async (req, res) => {
             });
         }
 
+        const addressList = customerData['Address Details'] || [];
+        const permAddress = addressList.find(addr => addr.ADDRESSTYPE === 'P') || {};
+        const currAddress = addressList.find(addr => addr.ADDRESSTYPE === 'C') || {};
+
         let res_body = {
             CUSTOMER_ID: customerData['Customer Details'].CUSTOMERID,
             CUSTUIN: customerData['Customer Details'].CUSTUIN,
             FIRST_NAME: customerData['Customer Details'].FIRSTNAME,
             MIDDLE_NAME: customerData['Customer Details'].MIDDLENAME,
             LAST_NAME: customerData['Customer Details'].LASTNAME,
-            // RISKCAT: '',
+            RISKCAT: customerData['Customer Details'].RISKCAT || '1',
             MOBILE: customerData['Customer Details'].REG_MOBILENO,
-            // OCCUPATION: '',
-            // ID_PROOF: '',
-            // ID_PROOF_NUMBER: '',
-            // ADDRESS_PROOF: '',
-            // ADDRESS_PROOF_NUMBER: '',
+            OCCUPATION: customerData['Customer Details'].OCCUPATIONID || '',
             PAN: customerData['Customer Details'].PANNO,
-            // TITLE: customerData['Customer Details'].TITLE,
+            TITLE: customerData['Customer Details'].TITLE,
             BIRTHDATE: customerData['Customer Details'].BIRTHDATE,
             GENDER: customerData['Customer Details'].GENDER,
+            MARITAL_STATUS: customerData['Customer Details'].MARITALSTATUS || '',
+            RELIGION: customerData['Customer Details'].RELIGION || '',
+            CASTE: customerData['Customer Details'].CASTE || '',
+            FATHER_TITLE: customerData['Customer Details'].FATHERTITLE || '',
+            FATHER_FIRST_NAME: customerData['Customer Details'].FATHERFNM || '',
+            FATHER_MIDDLE_NAME: customerData['Customer Details'].FATHERMNM || '',
+            FATHER_LAST_NAME: customerData['Customer Details'].FATHERLNM || '',
+            MOTHER_TITLE: customerData['Customer Details'].MOTHERTITLE || '',
+            MOTHER_FIRST_NAME: customerData['Customer Details'].MOTHERFNAME || '',
+            MOTHER_MIDDLE_NAME: customerData['Customer Details'].MOTHERMNAME || '',
+            MOTHER_LAST_NAME: customerData['Customer Details'].MOTHERLNAME || '',
+            ISSUED_DOC_AUTHORITY: customerData['Customer Details'].IDDOCISSUAUTH || '',
+            ISSUED_DOC_PLACE: customerData['Customer Details'].ISSUIDDOCPLACE || '',
+
+            ID_PROOF: customerData['Customer Details'].IDTPROOFID || '',
+            ID_PROOF_NUMBER: customerData['Customer Details'].IDTPROOFIDNO || '',
+            PERMANENT_ADDRESS_PROOF: customerData['Customer Details'].PROOFDETAILSID || '',
+            PERMANENT_ADDRESS_PROOF_NUMBER: customerData['Customer Details'].ADDPROOFIDNO || '',
+            ANNUAL_INCOME: customerData['Customer Details'].ANNUALINCOME || '',
+
+            PERMANENT_ADDRESS: permAddress.ADDRESSLINE1 || '',
+            PERMANENT_PINCODE: permAddress.PINCODE || '',
+            PERMANENT_STATE: permAddress.STATEID || '',
+            PERMANENT_TALUKA: permAddress.TALUKAID || '',
+            PERMANENT_CITY: permAddress.CITYID || '',
+            PERMANENT_DISTRICT: permAddress.DISTRICTID || '',
+
+            CURRENT_ADDRESS: currAddress.ADDRESSLINE1 || '',
+            CURRENT_PINCODE: currAddress.PINCODE || '',
+            CURRENT_STATE: currAddress.STATEID || '',
+            CURRENT_TALUKA: currAddress.TALUKAID || '',
+            CURRENT_CITY: currAddress.CITYID || '',
+            CURRENT_DISTRICT: currAddress.DISTRICTID || '',
 
             ALREADY_EXIST: customerData['Having individual account'] || customerData['Having individual account:'],
             KYC_DETAILS: customerData['KYC Details'] || null
-
-            // STATE: '',
-            // DISTRICT: '',
-            // TALUKA: '',
-            // CITY: '',
-            // AREA: '',
-            // PINCODE: ''
         }
 
         res.send({
