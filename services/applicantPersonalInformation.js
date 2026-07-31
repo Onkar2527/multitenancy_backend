@@ -1,5 +1,13 @@
 const db = require('../utilities/dbModule');
 
+// Removes undefined and null keys so mysql2 never writes them as NULL.
+// Only fields explicitly present in the payload will be included in SET.
+function stripUndefined(obj) {
+    return Object.fromEntries(
+        Object.entries(obj).filter(([, v]) => v !== undefined && v !== null)
+    );
+}
+
 // -------------------------------
 // Request body mapper
 function reqData(req) {
@@ -133,7 +141,7 @@ exports.get = async(req, res) => {
 exports.create = async(req, res) => {
     const pool = req.db;
     try {
-        const data = reqData(req);
+        const data = stripUndefined(reqData(req));
         if (!data.APPLICANT_ID) {
             return res.status(400).send({ code: 400, message: 'APPLICANT_ID is required' });
         }
@@ -150,7 +158,7 @@ exports.create = async(req, res) => {
 exports.update = async(req, res) => {
     const pool = req.db;
     try {
-        const data = reqData(req);
+        const data = stripUndefined(reqData(req));
         const { ID } = req.body;
         if (!ID) {
             return res.status(400).send({ code: 400, message: 'ID is required' });

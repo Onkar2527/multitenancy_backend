@@ -2,6 +2,14 @@ const db = require('../utilities/dbModule');
 
 const applicant_table = 'applicants_personal_details';
 
+// Removes undefined and null keys so mysql2 never writes them as NULL.
+// Only fields explicitly present in the payload will be included in SET.
+function stripUndefined(obj) {
+    return Object.fromEntries(
+        Object.entries(obj).filter(([, v]) => v !== undefined && v !== null)
+    );
+}
+
 function reqData(req) {
     return {
         NO_OF_APPLICANT: req.body.NO_OF_APPLICANT,
@@ -364,16 +372,20 @@ exports.update = async (req, res) => {
                 );
 
                 if (existing.length > 0) {
-                    const applicantPersonalData = getAllApplicantsInfo(applicant, applicantNo);
+                    // Strip undefined/null so fields absent from the basic-details payload
+                    // are not written as NULL — they may have been filled by a later step.
+                    const applicantPersonalData = stripUndefined(getAllApplicantsInfo(applicant, applicantNo));
                     await connection.query(
                         `UPDATE applicants_personal_details SET ? WHERE ID = ?`, [applicantPersonalData, existing[0].ID]
                     );
                 } else {
-                    const applicantPersonalData = {
+                    // On insert, merge defaults first then override with payload values.
+                    // stripUndefined ensures undefined payload fields don't null-out defaults.
+                    const applicantPersonalData = stripUndefined({
                         ...getCommonApplicantInfo(),
                         ...getAllApplicantsInfo(applicant, applicantNo),
                         APPLICANT_ID: req.body.ID
-                    };
+                    });
 
                     const applicantPhotoData = {
                         FIRST_NAME: applicant.FIRST_NAME,
@@ -572,14 +584,14 @@ async function copyExistingDetails(connection, proposalId, applicantNo, customer
 
         if (prevProposals.length > 0) {
             const prevId = prevProposals[0].ID;
-            
+
             // Find the applicant number in previous proposal by matching Aadhaar or PAN
             const [prevApps] = await connection.query(
                 `SELECT APPLICANT_NO FROM applicants_personal_details 
                  WHERE APPLICANT_ID = ? AND (AADHAAR_NUMBER = ? OR PAN_NO = ?)`,
                 [prevId, aadhaar, pan]
             );
-            
+
             const prevNo = prevApps.length > 0 ? prevApps[0].APPLICANT_NO : 1;
 
             // 1. Copy Nominee Details
