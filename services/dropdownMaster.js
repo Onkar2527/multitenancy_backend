@@ -1,7 +1,89 @@
 const { validationResult } = require('express-validator');
+const { masterPool } = require('../utilities/dbConfig');
 
 const dropdownMaster = 'dropdown_master';
 const dropdownField = 'dropdown_field_master';
+
+/**
+ * Checks if the table name refers to a shared/master table in fco_super_admin.
+ * Returns an object with the pool to use and the query/params to execute.
+ */
+const getTableQueryContext = (tableName, req) => {
+    const isMasterTable = ['bank_master', 'branch_master', 'user_master'].includes(tableName);
+    const bankId = req.user?.BANK_ID;
+
+    if (isMasterTable) {
+        let sql = `SELECT * FROM ??`;
+        let params = [tableName];
+
+        if (bankId) {
+            if (tableName === 'bank_master') {
+                sql += ` WHERE ID = ?`;
+                params.push(bankId);
+            } else {
+                sql += ` WHERE BANK_ID = ?`;
+                params.push(bankId);
+            }
+        }
+
+        return {
+            pool: masterPool,
+            sql,
+            params
+        };
+    }
+
+    // Default: use tenant database (req.db) and no filtering
+    return {
+        pool: req.db,
+        sql: `SELECT * FROM ??`,
+        params: [tableName]
+    };
+};
+
+const seedDefaultDropdownsIfEmpty = async (db) => {
+    try {
+        const [[{ cnt }]] = await db.promise().query(`SELECT COUNT(*) as cnt FROM ${dropdownMaster}`);
+        if (cnt > 0) return; // Already has dropdowns
+
+        console.log("🌱 Seeding default dropdown masters dynamically to tenant DB...");
+        const defaultTables = [
+            { name: 'Bank Master', table: 'bank_master', isMaster: true },
+            { name: 'Branch Master', table: 'branch_master', isMaster: true },
+            { name: 'User Master', table: 'user_master', isMaster: true },
+            { name: 'Role Master', table: 'role_master', isMaster: true }
+        ];
+
+        for (const item of defaultTables) {
+            const [existing] = await db.promise().query(`SELECT * FROM ${dropdownMaster} WHERE TABLE_NAME = ?`, [item.table]);
+            if (existing.length === 0) {
+                // Insert dropdown configuration
+                await db.promise().query(`INSERT INTO ${dropdownMaster} SET ?`, {
+                    NAME: item.name,
+                    TABLE_NAME: item.table
+                });
+
+                // Dynamically fetch schema using DESCRIBE query on the correct database context
+                const pool = item.isMaster ? masterPool : db;
+                const [describeResult] = await pool.promise().query(`DESCRIBE ??`, [item.table]);
+
+                const tableSchema = describeResult.map((row) => ({
+                    FIELD_NAME: row.Field,
+                    FIELD_TYPE: row.Type,
+                    TABLE_NAME: item.table
+                }));
+
+                // Seed dynamic field schemas into dropdown_field_master
+                for (const scheme of tableSchema) {
+                    await db.promise().query(`INSERT INTO ${dropdownField} SET ?`, scheme);
+                }
+            }
+        }
+        console.log("🌱 Default dropdown dynamic seeding complete.");
+    } catch (error) {
+        console.error("❌ ERROR SEEDING DEFAULT DROPDOWNS:", error);
+    }
+};
 
 const reqDataDropdown = (req) => {
     return {
@@ -38,6 +120,7 @@ const reqDataValues = (req) => {
 // GET DROPDOWN MASTER
 exports.get = async (req, res) => {
     try {
+        await seedDefaultDropdownsIfEmpty(req.db);
         const filter = reqGetDataDropdown(req);
         let sql = `SELECT * FROM ${dropdownMaster} WHERE 1`;
         let countSql = `SELECT COUNT(*) as cnt FROM ${dropdownMaster} WHERE 1`;
@@ -77,8 +160,9 @@ exports.get = async (req, res) => {
             const [fieldResult] = await req.db.promise().query(`SELECT * FROM ${dropdownField} WHERE TABLE_NAME = ?`, [result.TABLE_NAME]);
             result.FIELDS = fieldResult;
 
-            // Safe query for dynamic table name
-            const [valueResult] = await req.db.promise().query(`SELECT * FROM ??`, [result.TABLE_NAME]);
+            // Query either master or tenant DB depending on table name
+            const context = getTableQueryContext(result.TABLE_NAME, req);
+            const [valueResult] = await context.pool.promise().query(context.sql, context.params);
             result.DROPDOWN_DATA = valueResult;
 
             return result;
@@ -358,7 +442,8 @@ exports.getValues = async (req, res) => {
             });
         }
 
-        const [rows] = await req.db.promise().query(`SELECT * FROM ??`, [TABLE_NAME]);
+        const context = getTableQueryContext(TABLE_NAME, req);
+        const [rows] = await context.pool.promise().query(context.sql, context.params);
 
         return res.send({
             code: 200,
@@ -426,7 +511,10 @@ exports.updateValues = async (req, res) => {
             });
         }
 
-        await req.db.promise().query(`UPDATE ?? SET ? WHERE ID = ?`, [TABLE_NAME, DATA, ID]);
+        const isMasterTable = ['bank_master', 'branch_master', 'user_master'].includes(TABLE_NAME);
+        const pool = isMasterTable ? masterPool : req.db;
+
+        await pool.promise().query(`UPDATE ?? SET ? WHERE ID = ?`, [TABLE_NAME, DATA, ID]);
 
         return res.send({
             code: 200,
@@ -456,7 +544,10 @@ exports.deleteValues = async (req, res) => {
             });
         }
 
-        await req.db.promise().query(`DELETE FROM ?? WHERE ID = ?`, [TABLE_NAME, ID]);
+        const isMasterTable = ['bank_master', 'branch_master', 'user_master'].includes(TABLE_NAME);
+        const pool = isMasterTable ? masterPool : req.db;
+
+        await pool.promise().query(`DELETE FROM ?? WHERE ID = ?`, [TABLE_NAME, ID]);
 
         return res.send({
             code: 200,
@@ -476,7 +567,9 @@ exports.deleteValues = async (req, res) => {
 // HELPER: executeCreateQuery
 async function executeCreateQuery(data, table, messages, req, res) {
     try {
-        await req.db.promise().query(`INSERT INTO ?? SET ?`, [table, data]);
+        const isMasterTable = ['bank_master', 'branch_master', 'user_master'].includes(table);
+        const pool = isMasterTable ? masterPool : req.db;
+        await pool.promise().query(`INSERT INTO ?? SET ?`, [table, data]);
 
         return res.send({
             code: 200,
