@@ -1,4 +1,7 @@
+
+
 const db = require('../utilities/dbModule');
+const axios = require("axios");
 
 function reqData(req) {
     return {
@@ -16,37 +19,81 @@ function reqData(req) {
 exports.create = async (req, res) => {
     const pool = req.db;
     let connection;
+
     try {
         let addressData = req.body.ADDRESS_ID || {};
+
         if (Array.isArray(addressData)) {
             addressData = addressData[0] || {};
         }
+
         const aadhaarData = reqData(req);
+
+        // Convert PROFILE_IMAGE URL to Base64
+        if (
+            aadhaarData.PROFILE_IMAGE &&
+            aadhaarData.PROFILE_IMAGE.startsWith("http")
+        ) {
+            const imageResponse = await axios.get(
+                aadhaarData.PROFILE_IMAGE,
+                {
+                    responseType: "arraybuffer"
+                }
+            );
+
+            const contentType =
+                imageResponse.headers["content-type"] || "image/jpeg";
+
+            aadhaarData.PROFILE_IMAGE =
+                `data:${contentType};base64,` +
+                Buffer.from(imageResponse.data).toString("base64");
+
+            console.log(
+                "PROFILE_IMAGE converted to Base64, length:",
+                aadhaarData.PROFILE_IMAGE.length
+            );
+        }
 
         connection = await pool.promise().getConnection();
         await connection.beginTransaction();
 
         // 1. Insert Address
-        const [addressResult] = await connection.query(`INSERT INTO aadhaar_address SET ?`, [addressData]);
+        const [addressResult] = await connection.query(
+            `INSERT INTO aadhaar_address SET ?`,
+            [addressData]
+        );
+
         aadhaarData.ADDRESS_ID = addressResult.insertId;
 
         // 2. Insert Aadhaar Verified Record
-        await connection.query(`INSERT INTO aadhaar_verified_list SET ?`, [aadhaarData]);
+        await connection.query(
+            `INSERT INTO aadhaar_verified_list SET ?`,
+            [aadhaarData]
+        );
 
         await connection.commit();
+
         res.send({
             code: 200,
             message: "Aadhaar information saved successfully"
         });
+
     } catch (error) {
         console.error("AADHAAR CREATE ERROR:", error);
-        if (connection) await connection.rollback();
+
+        if (connection) {
+            await connection.rollback();
+        }
+
         res.status(400).send({
             code: 400,
             message: "Failed to save Aadhaar details"
         });
+
     } finally {
-        if (connection) connection.release();
+        if (connection) {
+            connection.release();
+        }
     }
 };
 
