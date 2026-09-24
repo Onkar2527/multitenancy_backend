@@ -636,7 +636,7 @@ function substring5(str, strict = 0) {
         return "-";
     }
 
-    return str.substring(0, 4);
+    return str.substring(0, 5);
 }
 
 
@@ -1077,8 +1077,8 @@ async function getBranchFromCBS(pool, branchID) {
 async function getUserNameByID(pool, id) {
     try {
         if (!id) return '-';
-        const [rows] = await pool.promise().query('select NAME from user_master where ID = ?', [id]);
-        return (rows.length > 0 && rows[0].NAME) ? substring5(rows[0].NAME, 1) : '-';
+        const [rows] = await pool.promise().query('select USER_NAME from user_master where ID = ?', [id]);
+        return (rows.length > 0 && rows[0].USER_NAME) ? substring5(rows[0].USER_NAME, 1) : '-';
     } catch (error) {
         return '-';
     }
