@@ -4,7 +4,11 @@ const axios = require('axios');
 const https = require("https");
 const db = require('../../utilities/dbModule');
 const fs = require('fs/promises')
+const path = require('path')
 const schedule = require('node-schedule')
+
+// In-flight concurrency lock to prevent duplicate onboarding requests
+const inFlightOnboardings = new Set();
 
 
 const agent = new https.Agent({
@@ -517,12 +521,225 @@ exports.getOnboardPayload = async (req, res) => {
     }
 };
 
+function getOnboardTimestamp() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+}
+
+exports.downloadOnboardJson = async (req, res) => {
+    try {
+        const applicant_id = req.body?.APPLICANT_ID || req.query?.APPLICANT_ID || req.body?.applicant_id || req.query?.applicant_id;
+        if (!applicant_id) {
+            return res.status(400).send({
+                code: 400,
+                message: 'APPLICANT_ID is required'
+            });
+        }
+
+        const type = String(req.body?.type || req.query?.type || 'all').toLowerCase(); // 'request', 'response', or 'all'
+        const isDownload = req.body?.download === true || req.query?.download === 'true' || req.query?.download === '1';
+        const targetTimestamp = req.body?.timestamp || req.query?.timestamp; // Optional: download specific historical attempt
+
+        const logDir = path.join(__dirname, '..', '..', 'account_json');
+
+        // Scan for all historical attempts for this applicant
+        const allFiles = await fs.readdir(logDir).catch(() => []);
+        const historyRegex = new RegExp(`^onboard_${applicant_id}_(\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2})_(request|response)\\.json$`);
+        const historyMap = {};
+
+        for (const file of allFiles) {
+            const match = file.match(historyRegex);
+            if (match) {
+                const [, ts, fileType] = match;
+                if (!historyMap[ts]) {
+                    historyMap[ts] = { timestamp: ts };
+                }
+                if (fileType === 'request') historyMap[ts].request_file = file;
+                if (fileType === 'response') historyMap[ts].response_file = file;
+            }
+        }
+        const historyList = Object.values(historyMap).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+        // Determine target file paths (either specific timestamp or latest)
+        let reqFilePath, resFilePath;
+        if (targetTimestamp) {
+            reqFilePath = path.join(logDir, `onboard_${applicant_id}_${targetTimestamp}_request.json`);
+            resFilePath = path.join(logDir, `onboard_${applicant_id}_${targetTimestamp}_response.json`);
+        } else {
+            reqFilePath = path.join(logDir, `onboard_${applicant_id}_request.json`);
+            resFilePath = path.join(logDir, `onboard_${applicant_id}_response.json`);
+        }
+        const legacyReqFilePath = path.join(logDir, `onboard_${applicant_id}.json`);
+
+        let requestJson = null;
+        let responseJson = null;
+
+        // Try reading request file from disk
+        try {
+            let reqContent;
+            try {
+                reqContent = await fs.readFile(reqFilePath, 'utf8');
+            } catch {
+                reqContent = await fs.readFile(legacyReqFilePath, 'utf8');
+            }
+            requestJson = JSON.parse(reqContent);
+        } catch (e) {
+            // Fallback: If not found on disk, build dynamically from DB if pool is available
+            try {
+                if (req.db) {
+                    const { account_opening_data } = await buildOnboardPayloadData(req, applicant_id);
+                    requestJson = account_opening_data;
+                }
+            } catch (buildErr) {
+                console.warn(`[downloadOnboardJson] Could not build payload for applicant ${applicant_id}:`, buildErr.message);
+            }
+        }
+
+        // Try reading response file from disk
+        try {
+            const resContent = await fs.readFile(resFilePath, 'utf8');
+            responseJson = JSON.parse(resContent);
+        } catch (e) {
+            responseJson = null;
+        }
+
+        const fileSuffix = targetTimestamp ? `_${targetTimestamp}` : '';
+
+        // If file download attachment is requested
+        if (isDownload) {
+            if (type === 'response' || type === 'res') {
+                if (!responseJson) {
+                    return res.status(404).send({
+                        code: 404,
+                        message: `Response JSON file not found for applicant ID ${applicant_id}${targetTimestamp ? ' at ' + targetTimestamp : ''}`
+                    });
+                }
+                return res.download(resFilePath, `onboard_${applicant_id}${fileSuffix}_response.json`);
+            }
+
+            if (type === 'request' || type === 'req') {
+                if (!requestJson) {
+                    return res.status(404).send({
+                        code: 404,
+                        message: `Request JSON file not found for applicant ID ${applicant_id}${targetTimestamp ? ' at ' + targetTimestamp : ''}`
+                    });
+                }
+                let fileToSend = reqFilePath;
+                try {
+                    await fs.access(reqFilePath);
+                } catch {
+                    try {
+                        await fs.access(legacyReqFilePath);
+                        fileToSend = legacyReqFilePath;
+                    } catch {
+                        await fs.mkdir(logDir, { recursive: true });
+                        await fs.writeFile(reqFilePath, JSON.stringify(requestJson, null, 4), 'utf8');
+                    }
+                }
+                return res.download(fileToSend, `onboard_${applicant_id}${fileSuffix}_request.json`);
+            }
+
+            // Both combined as a downloadable JSON file
+            const combined = {
+                applicant_id,
+                timestamp: targetTimestamp || 'latest',
+                request: requestJson,
+                response: responseJson
+            };
+            res.setHeader('Content-Disposition', `attachment; filename="onboard_${applicant_id}${fileSuffix}_all.json"`);
+            res.setHeader('Content-Type', 'application/json');
+            return res.send(JSON.stringify(combined, null, 4));
+        }
+
+        // Return JSON payload directly
+        if (type === 'request' || type === 'req') {
+            if (!requestJson) {
+                return res.status(404).send({
+                    code: 404,
+                    message: `Request JSON not found for applicant ID ${applicant_id}`
+                });
+            }
+            return res.send({
+                code: 200,
+                message: 'success',
+                applicant_id,
+                timestamp: targetTimestamp || 'latest',
+                type: 'request',
+                data: requestJson
+            });
+        }
+
+        if (type === 'response' || type === 'res') {
+            if (!responseJson) {
+                return res.status(404).send({
+                    code: 404,
+                    message: `Response JSON not found for applicant ID ${applicant_id}`
+                });
+            }
+            return res.send({
+                code: 200,
+                message: 'success',
+                applicant_id,
+                timestamp: targetTimestamp || 'latest',
+                type: 'response',
+                data: responseJson
+            });
+        }
+
+        return res.send({
+            code: 200,
+            message: 'success',
+            applicant_id,
+            timestamp: targetTimestamp || 'latest',
+            total_attempts: historyList.length,
+            history: historyList,
+            files: {
+                has_request: Boolean(requestJson),
+                has_response: Boolean(responseJson)
+            },
+            data: {
+                request: requestJson,
+                response: responseJson
+            }
+        });
+    } catch (error) {
+        console.error('❌ downloadOnboardJson error:', error);
+        return res.status(500).send({
+            code: 500,
+            message: error.message || 'Internal server error'
+        });
+    }
+};
+
 exports.onBoardCustomer = async (req, res) => {
+    const applicant_id = req.body.APPLICANT_ID;
+    if (!applicant_id) {
+        return res.status(400).send({
+            code: 400,
+            message: 'APPLICANT_ID is required'
+        });
+    }
+
+    const bankId = req.user?.BANK_ID || '0';
+    const lockKey = `${bankId}_${applicant_id}`;
+
+    // Concurrency Lock: Prevent multiple in-flight requests for the same applicant
+    if (inFlightOnboardings.has(lockKey)) {
+        console.warn(`Blocked duplicate concurrent request for: ${lockKey}`);
+        return res.status(409).send({
+            code: 409,
+            message: 'Account creation is already in progress for this proposal. Please wait.'
+        });
+    }
+
+    inFlightOnboardings.add(lockKey);
     try {
         const applicant_id = req.body.APPLICANT_ID;
         const pool = req.db;
 
         if (!pool) {
+            inFlightOnboardings.delete(lockKey);
             return res.status(400).send({
                 code: 400,
                 message: 'Database pool not found'
@@ -530,6 +747,20 @@ exports.onBoardCustomer = async (req, res) => {
         }
 
         const { account_opening_data, basicR, personalR, depositR } = await buildOnboardPayloadData(req, applicant_id);
+
+        // Idempotency Check: If account is already created, do not call CBS again!
+        if (basicR && basicR.ACCOUNT_NUMBER) {
+            inFlightOnboardings.delete(lockKey);
+            console.warn(`[onBoardCustomer] Account already exists for applicant ${applicant_id}: ${basicR.ACCOUNT_NUMBER}`);
+            return res.status(400).send({
+                code: 400,
+                message: `Account has already been created for this applicant (${basicR.ACCOUNT_NUMBER})`,
+                data: {
+                    ACCOUNT_NUMBER: basicR.ACCOUNT_NUMBER,
+                    CUSTOMER_ID: basicR.CUSTOMER_ID_1
+                }
+            });
+        }
 
 
         const host = process.env.CBS_API_HOST || req.cbsApiHost || 'https://10.35.250.3';
@@ -553,23 +784,72 @@ exports.onBoardCustomer = async (req, res) => {
         // DEBUG (remove later)
         console.log("🚀 FINAL HEADERS:", configuration.headers);
 
-        // 📁 Save onboarding payload to JSON file locally in backend
+        // 📁 Save onboarding request payload to JSON files locally in backend (History + Latest)
+        const logDir = path.join(__dirname, '..', '..', 'account_json');
+        const timestamp = getOnboardTimestamp();
         try {
-            const path = require('path');
-            const logDir = path.join(__dirname, '..', '..', 'account_json');
             await fs.mkdir(logDir, { recursive: true });
-            const logFilePath = path.join(logDir, `onboard_${applicant_id}.json`);
-            await fs.writeFile(logFilePath, JSON.stringify(account_opening_data, null, 4), 'utf8');
-            console.log(`🟢 [onBoardCustomer] Logged payload JSON to: ${logFilePath}`);
+            const payloadStr = JSON.stringify(account_opening_data || {}, null, 4);
+
+            // History file (never overwritten)
+            const historyReqFilePath = path.join(logDir, `onboard_${applicant_id}_${timestamp}_request.json`);
+            await fs.writeFile(historyReqFilePath, payloadStr, 'utf8');
+
+            // Latest file pointers
+            const reqFilePath = path.join(logDir, `onboard_${applicant_id}_request.json`);
+            const legacyFilePath = path.join(logDir, `onboard_${applicant_id}.json`);
+            await fs.writeFile(reqFilePath, payloadStr, 'utf8');
+            await fs.writeFile(legacyFilePath, payloadStr, 'utf8');
+            console.log(`🟢 [onBoardCustomer] Logged request JSON to: ${historyReqFilePath} and ${reqFilePath}`);
         } catch (fileErr) {
-            console.error('❌ [onBoardCustomer] Failed to save payload JSON file:', fileErr);
+            console.error('❌ [onBoardCustomer] Failed to save request JSON file:', fileErr);
         }
 
-        const accountCreatedData = await axios.post(
-            posturl,
-            account_opening_data,
-            configuration
-        );
+        let accountCreatedData;
+        try {
+            accountCreatedData = await axios.post(
+                posturl,
+                account_opening_data,
+                configuration
+            );
+
+            // 📁 Save onboarding response from CBS locally in backend (History + Latest)
+            try {
+                const resDataStr = JSON.stringify(accountCreatedData?.data || {}, null, 4);
+
+                // History file (never overwritten)
+                const historyResFilePath = path.join(logDir, `onboard_${applicant_id}_${timestamp}_response.json`);
+                await fs.writeFile(historyResFilePath, resDataStr, 'utf8');
+
+                // Latest response file
+                const resFilePath = path.join(logDir, `onboard_${applicant_id}_response.json`);
+                await fs.writeFile(resFilePath, resDataStr, 'utf8');
+                console.log(`🟢 [onBoardCustomer] Logged response JSON to: ${historyResFilePath} and ${resFilePath}`);
+            } catch (fileErr) {
+                console.error('❌ [onBoardCustomer] Failed to save response JSON file:', fileErr);
+            }
+        } catch (cbsErr) {
+            // 📁 Save error response from CBS locally in backend for tracking (History + Latest)
+            try {
+                const errorPayload = cbsErr?.response?.data || {
+                    message: cbsErr?.message || 'CBS onboarding failed',
+                    status: cbsErr?.response?.status || 400
+                };
+                const errDataStr = JSON.stringify(errorPayload, null, 4);
+
+                // History file (never overwritten)
+                const historyResFilePath = path.join(logDir, `onboard_${applicant_id}_${timestamp}_response.json`);
+                await fs.writeFile(historyResFilePath, errDataStr, 'utf8');
+
+                // Latest response file
+                const resFilePath = path.join(logDir, `onboard_${applicant_id}_response.json`);
+                await fs.writeFile(resFilePath, errDataStr, 'utf8');
+                console.log(`🔴 [onBoardCustomer] Logged error response JSON to: ${historyResFilePath} and ${resFilePath}`);
+            } catch (fileErr) {
+                console.error('❌ [onBoardCustomer] Failed to save error response JSON file:', fileErr);
+            }
+            throw cbsErr;
+        }
 
         if (account_opening_data.custobj.entryuser === '-' ||
             account_opening_data.custobj.verifiedby === '-' ||
@@ -601,6 +881,8 @@ exports.onBoardCustomer = async (req, res) => {
 
         await pool.promise().query(basicUpdateQ, basicUpdateParams);
 
+        inFlightOnboardings.delete(lockKey);
+
         res.send({
             "code": 200,
             "data": account_opening_data,
@@ -613,6 +895,8 @@ exports.onBoardCustomer = async (req, res) => {
         console.log("ERROR RESPONSE => ", error?.response);
         console.log("ERROR DATA => ", error?.response?.data);
         console.log("ERROR MESSAGE => ", error?.message);
+
+        inFlightOnboardings.delete(lockKey);
 
         res.status(400).send({
             code: 400,
@@ -970,7 +1254,12 @@ async function getDocument(NAME, arr) {
     if (filelink != '') {
         let pathD = filelink;
 
-        let res = await fs.readFile(pathD, { encoding: 'utf-8' });
+        let res = '';
+        try {
+            res = await fs.readFile(pathD, { encoding: 'utf-8' });
+        } catch (fileErr) {
+            console.warn(`[getDocument] Document file not found on disk: ${pathD}`, fileErr?.message);
+        }
 
         res = res.replace("data:image/jpeg;base64,", '');
         return res;
